@@ -1,6 +1,6 @@
 services:
   db:
-    # Postgres 17 with pgvector preinstalled (needed later for semantic search embeddings).
+    # Postgres 17 with pgvector (vector index for semantic search).
     image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: bookfinder

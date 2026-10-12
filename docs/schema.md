@@ -12,6 +12,7 @@ works whose subjects mention fiction (not "nonfiction") and that have at least o
 | `authors` | author of a kept work | name, birth/death date, Wikidata ID |
 | `work_authors` | work–author link | position (author order) |
 | `ingest_runs` | load run | source files, counts |
+| `work_embeddings` | work with a description | model, text hash, 768-dimension vector |
 
 Keys are Open Library IDs without the path prefix (`OL45804W`, `OL7353617M`, `OL23919A`), so any row maps back to
 `https://openlibrary.org/works/<id>`.
@@ -45,9 +46,23 @@ work ID still count for the surviving work.
 | Popularity ordering | B-tree on `want_to_read + currently_reading + already_read` |
 | Joins / lookups | `work_authors(author_id)`, `editions(work_id)`, GIN on `editions.isbn_13` |
 
-Semantic (meaning-based) search is the next step: a `work_embeddings` table with a pgvector HNSW index, added in a
-later migration once the embedding model (and so the vector size) is chosen. `docker-compose.yml` already uses an
-image with pgvector.
+Semantic (meaning-based) search uses `work_embeddings`: one 768-dimension vector per work from
+[EmbeddingGemma](https://huggingface.co/google/embeddinggemma-300m), run locally with Ollama.
+
+| Purpose | Index |
+|---|---|
+| Find works whose meaning is closest to the query | HNSW on `work_embeddings.embedding` (`halfvec`, cosine) |
+
+- `halfvec` (16-bit floats) halves storage: ~1 GB table + index for ~300k works.
+- Query-time recall is set with `hnsw.ef_search` (200). Filters (year, pages, language) are applied during the
+  index walk using pgvector's iterative scans (`hnsw.iterative_scan = relaxed_order`), so selective filters still
+  return a full result list.
+- Embeddings are kept across catalogue rebuilds (no foreign key to `works`). Each row stores the model and a hash of
+  the embedded text; `cmd/embed` only re-embeds works whose text or model changed and prunes deleted works.
+- Embedded text per work: title (+ subtitle), authors, up to 15 genres/subjects, and the description capped at 4,000
+  characters (~1,000 tokens, within EmbeddingGemma's 2,048-token window), using EmbeddingGemma's prompt formats
+  (`title: … | text: …` for books, `task: search result | query: …` for queries).
+- Only works with a description are embedded by default; title and subjects alone carry little meaning.
 
 ## Loading
 

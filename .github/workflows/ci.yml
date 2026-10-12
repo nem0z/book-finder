@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_USER: bookfinder
           POSTGRES_PASSWORD: bookfinder
@@ -31,4 +31,5 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)"
       - run: go vet ./...
-      - run: go test -race ./...
+      # -p 1: database tests in different packages share one database.
+      - run: go test -race -p 1 ./...
