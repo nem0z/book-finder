@@ -1,0 +1,7 @@
+# Open Library dump files
+/data/
+*.txt.gz
+
+# Build output
+/bin/
+*.exe
