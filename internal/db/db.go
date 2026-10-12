@@ -4,10 +4,15 @@ package db
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
+	"path"
 	"sort"
+	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -27,17 +32,21 @@ func Connect(ctx context.Context, url string, params map[string]string) (*pgxpoo
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
+
 	for k, v := range params {
 		cfg.ConnConfig.RuntimeParams[k] = v
 	}
+
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
+
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
+
 	return pool, nil
 }
 
@@ -46,58 +55,155 @@ func Connect(ctx context.Context, url string, params map[string]string) (*pgxpoo
 func Migrate(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("acquire connection: %w", err)
 	}
 	defer conn.Release()
 
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLockKey); err != nil {
-		return nil, fmt.Errorf("acquire migration lock: %w", err)
+	if err := lockMigrations(ctx, conn); err != nil {
+		return nil, err
 	}
-	defer conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockKey) //nolint:errcheck
+	defer unlockMigrations(conn)
 
-	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-		version    text PRIMARY KEY,
-		applied_at timestamptz NOT NULL DEFAULT now()
-	)`); err != nil {
-		return nil, fmt.Errorf("create schema_migrations: %w", err)
+	if err := createMigrationsTable(ctx, conn); err != nil {
+		return nil, err
 	}
 
-	files, err := fs.Glob(migrationsFS, "migrations/*.sql")
+	files, err := migrationFiles()
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(files)
 
 	var applied []string
 	for _, file := range files {
-		version := file[len("migrations/") : len(file)-len(".sql")]
-		var exists bool
-		if err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)", version).Scan(&exists); err != nil {
-			return applied, err
-		}
-		if exists {
-			continue
-		}
-		body, err := migrationsFS.ReadFile(file)
+		version, ok, err := applyMigration(ctx, conn, file)
 		if err != nil {
 			return applied, err
 		}
-		tx, err := conn.Begin(ctx)
-		if err != nil {
-			return applied, err
+
+		if ok {
+			applied = append(applied, version)
 		}
-		if _, err := tx.Exec(ctx, string(body)); err != nil {
-			tx.Rollback(ctx) //nolint:errcheck
-			return applied, fmt.Errorf("migration %s: %w", version, err)
-		}
-		if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", version); err != nil {
-			tx.Rollback(ctx) //nolint:errcheck
-			return applied, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return applied, err
-		}
-		applied = append(applied, version)
 	}
+
 	return applied, nil
+}
+
+// lockMigrations takes a session-level advisory lock so concurrent runs apply migrations one at a time.
+func lockMigrations(ctx context.Context, conn *pgxpool.Conn) error {
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLockKey); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+
+	return nil
+}
+
+// unlockMigrations releases the advisory lock. It uses a fresh context so it still runs after
+// cancellation. If the unlock fails, the connection is closed, which makes the server drop the lock.
+func unlockMigrations(conn *pgxpool.Conn) {
+	ctx := context.Background()
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", migrationLockKey); err != nil {
+		slog.Warn("release migration lock; closing connection", "err", err)
+		if err := conn.Conn().Close(ctx); err != nil {
+			slog.Warn("close connection", "err", err)
+		}
+	}
+}
+
+func createMigrationsTable(ctx context.Context, conn *pgxpool.Conn) error {
+	_, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version    text PRIMARY KEY,
+		applied_at timestamptz NOT NULL DEFAULT now()
+	)`)
+	if err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
+	}
+
+	return nil
+}
+
+// migrationFiles lists the embedded migration files in the order they must be applied.
+func migrationFiles() ([]string, error) {
+	files, err := fs.Glob(migrationsFS, "migrations/*.sql")
+	if err != nil {
+		return nil, fmt.Errorf("list migrations: %w", err)
+	}
+
+	sort.Strings(files)
+
+	return files, nil
+}
+
+// applyMigration applies one migration file unless it is already recorded.
+// It returns the migration version and whether it was applied by this call.
+func applyMigration(ctx context.Context, conn *pgxpool.Conn, file string) (string, bool, error) {
+	version := strings.TrimSuffix(path.Base(file), ".sql")
+
+	done, err := isApplied(ctx, conn, version)
+	if err != nil {
+		return version, false, err
+	}
+
+	if done {
+		return version, false, nil
+	}
+
+	body, err := migrationsFS.ReadFile(file)
+	if err != nil {
+		return version, false, fmt.Errorf("read migration %s: %w", version, err)
+	}
+
+	if err := runMigration(ctx, conn, version, string(body)); err != nil {
+		return version, false, err
+	}
+
+	return version, true, nil
+}
+
+func isApplied(ctx context.Context, conn *pgxpool.Conn, version string) (bool, error) {
+	var exists bool
+	err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)", version).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check migration %s: %w", version, err)
+	}
+
+	return exists, nil
+}
+
+// runMigration executes a migration and records it in the same transaction, so a failed
+// migration leaves no trace.
+func runMigration(ctx context.Context, conn *pgxpool.Conn, version, body string) error {
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin migration %s: %w", version, err)
+	}
+	defer rollback(tx, version)
+
+	if _, err := tx.Exec(ctx, body); err != nil {
+		return fmt.Errorf("apply migration %s: %w", version, err)
+	}
+
+	if err := recordMigration(ctx, tx, version); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit migration %s: %w", version, err)
+	}
+
+	return nil
+}
+
+func recordMigration(ctx context.Context, tx pgx.Tx, version string) error {
+	if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", version); err != nil {
+		return fmt.Errorf("record migration %s: %w", version, err)
+	}
+
+	return nil
+}
+
+// rollback undoes an unfinished migration transaction; after a commit it is a no-op.
+func rollback(tx pgx.Tx, version string) {
+	if err := tx.Rollback(context.Background()); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		slog.Warn("roll back migration", "version", version, "err", err)
+	}
 }

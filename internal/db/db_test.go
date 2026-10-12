@@ -18,11 +18,13 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	if url == "" {
 		t.Skipf("%s not set", testDatabaseEnv)
 	}
+
 	pool, err := Connect(context.Background(), url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
+
 	return pool
 }
 
@@ -33,6 +35,7 @@ func TestMigrate(t *testing.T) {
 	if _, err := Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
+
 	if applied, err := Migrate(ctx, pool); err != nil || len(applied) != 0 {
 		t.Fatalf("second run should be a no-op: %v %v", applied, err)
 	}
@@ -41,8 +44,20 @@ func TestMigrate(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT array_agg(version ORDER BY version) FROM schema_migrations").Scan(&versions); err != nil {
 		t.Fatal(err)
 	}
+
 	if !slices.Contains(versions, "001_extensions") {
 		t.Errorf("recorded versions: %v", versions)
+	}
+}
+
+func TestMigrationFilesSorted(t *testing.T) {
+	files, err := migrationFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(files) == 0 || !slices.IsSorted(files) {
+		t.Errorf("migration files: %v", files)
 	}
 }
 

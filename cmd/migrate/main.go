@@ -30,6 +30,7 @@ func main() {
 		slog.Error("migrate", "err", err)
 		os.Exit(1)
 	}
+
 	slog.Info("migrations applied", "versions", applied)
 }
 
@@ -37,5 +38,6 @@ func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
+
 	return def
 }
