@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: bookfinder
+          POSTGRES_PASSWORD: bookfinder
+          POSTGRES_DB: bookfinder
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bookfinder -d bookfinder"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      BOOKFINDER_TEST_DATABASE_URL: postgres://bookfinder:bookfinder@localhost:5432/bookfinder?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race ./...
