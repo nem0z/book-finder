@@ -2,7 +2,6 @@ package oldump
 
 import (
 	"bytes"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -10,14 +9,8 @@ import (
 const (
 	recordColumns = 5 // type, key, revision, last_modified, JSON
 
-	minYear = 1000
-
-	fictionWord    = "fiction"
-	nonfictionWord = "nonfiction"
-	nonFictionWord = "non-fiction"
-	// Byte prefilter: "iction" matches "Fiction" and "fiction".
-	fictionLower = "iction"
-	fictionUpper = "ICTION"
+	// fictionSubject is the subject that marks a work as fiction (compared case-insensitively).
+	fictionSubject = "Fiction"
 
 	isbn10Length    = 10
 	isbn13Length    = 13
@@ -25,10 +18,11 @@ const (
 )
 
 var (
-	// yearRe matches a standalone 4-digit number starting with 1 or 2.
-	yearRe = regexp.MustCompile(`(?:^|[^0-9])([12][0-9]{3})(?:[^0-9]|$)`)
-
 	worksRefPrefix = []byte(`"/works/OL`)
+
+	// Byte prefilter: the fiction subject as a quoted JSON string, in its two common spellings.
+	fictionQuoted      = []byte(`"` + fictionSubject + `"`)
+	fictionQuotedLower = []byte(`"` + strings.ToLower(fictionSubject) + `"`)
 )
 
 // SplitRecord splits a dump line into its type, key and JSON columns.
@@ -41,24 +35,21 @@ func SplitRecord(line []byte) (typ, key, data []byte, ok bool) {
 	return parts[0], parts[1], parts[recordColumns-1], true
 }
 
-// ParseYear extracts the first plausible year (minYear..maxYear) from free-text dates
-// such as "1922", "March 3, 1922" or "c1922". It returns 0 when none is found.
+// ParseYear returns s as a year when it is exactly a positive integer no greater than maxYear,
+// such as "1922". Free-text dates ("March 3, 1922") are not trusted and return 0.
 func ParseYear(s string, maxYear int) int {
-	for _, m := range yearRe.FindAllStringSubmatch(s, -1) {
-		y, _ := strconv.Atoi(m[1])
-		if y >= minYear && y <= maxYear {
-			return y
-		}
+	y, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || y <= 0 || y > maxYear {
+		return 0
 	}
 
-	return 0
+	return y
 }
 
-// IsFiction reports whether any subject mentions fiction, excluding "nonfiction"/"non-fiction".
+// IsFiction reports whether the subjects include the fiction subject.
 func IsFiction(subjects []string) bool {
 	for _, s := range subjects {
-		l := strings.ToLower(s)
-		if strings.Contains(l, fictionWord) && !strings.Contains(l, nonfictionWord) && !strings.Contains(l, nonFictionWord) {
+		if strings.EqualFold(strings.TrimSpace(s), fictionSubject) {
 			return true
 		}
 	}
@@ -68,7 +59,7 @@ func IsFiction(subjects []string) bool {
 
 // MentionsFiction is a cheap byte-level prefilter run before JSON decoding.
 func MentionsFiction(line []byte) bool {
-	return bytes.Contains(line, []byte(fictionLower)) || bytes.Contains(line, []byte(fictionUpper))
+	return bytes.Contains(line, fictionQuoted) || bytes.Contains(line, fictionQuotedLower)
 }
 
 // EditionWorkKey finds the first work key in an edition's raw JSON without decoding it,

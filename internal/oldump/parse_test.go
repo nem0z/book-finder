@@ -15,8 +15,8 @@ func TestSplitRecord(t *testing.T) {
 
 func TestParseYear(t *testing.T) {
 	for in, want := range map[string]int{
-		"1922": 1922, "March 3, 1922": 1922, "c1922": 1922, "19--": 0, "": 0,
-		"12345": 0, "3000": 0, "May 2017, reprinted 2019": 2017,
+		"1922": 1922, " 1922 ": 1922, "850": 850, "March 3, 1922": 0, "c1922": 0, "19--": 0, "": 0,
+		"3000": 0, "-50": 0,
 	} {
 		if got := ParseYear(in, 2027); got != want {
 			t.Errorf("%q: got %d want %d", in, got, want)
@@ -30,11 +30,10 @@ func TestIsFiction(t *testing.T) {
 		want     bool
 	}{
 		{[]string{"Fiction"}, true},
-		{[]string{"Detective and mystery fiction"}, true},
+		{[]string{"Thrillers", " fiction "}, true},
+		{[]string{"Detective and mystery fiction"}, false},
 		{[]string{"Juvenile nonfiction"}, false},
-		{[]string{"Non-fiction"}, false},
 		{[]string{"Cooking"}, false},
-		{[]string{"Juvenile nonfiction", "Fiction, general"}, true},
 		{nil, false},
 	}
 
@@ -44,7 +43,8 @@ func TestIsFiction(t *testing.T) {
 		}
 	}
 
-	if !MentionsFiction([]byte(`"FICTION"`)) || MentionsFiction([]byte(`"Cooking"`)) {
+	if !MentionsFiction([]byte(`"subjects": ["Fiction"]`)) || !MentionsFiction([]byte(`["fiction"]`)) ||
+		MentionsFiction([]byte(`["Science fiction"]`)) {
 		t.Error("MentionsFiction")
 	}
 }
