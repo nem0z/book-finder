@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -54,4 +56,36 @@ func writeFile(t *testing.T, dir, name, content string, gz bool) string {
 	}
 
 	return path
+}
+
+// rec is one dump line: type, key and the JSON record.
+type rec struct {
+	typ, key string
+	data     map[string]any
+}
+
+func dumpFile(t *testing.T, dir, name string, recs []rec, gz bool) string {
+	t.Helper()
+	var b strings.Builder
+	for _, r := range recs {
+		data, err := json.Marshal(r.data)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		b.WriteString(r.typ + "\t" + r.key + "\t1\t2026-09-30T00:00:00\t" + string(data) + "\n")
+	}
+
+	return writeFile(t, dir, name, b.String(), gz)
+}
+
+func ref(k string) map[string]any { return map[string]any{"key": k} }
+
+func redirectsFixture(t *testing.T, dir string) string {
+	return dumpFile(t, dir, "redirects.txt", []rec{
+		{"/type/redirect", "/works/OL99W", map[string]any{"location": "/works/OL1W"}},
+		{"/type/redirect", "/works/OL98W", map[string]any{"location": "/works/OL6W"}},
+		{"/type/redirect", "/authors/OL9A", map[string]any{"location": "/authors/OL1A"}},
+		{"/type/redirect", "/books/OL97M", map[string]any{"location": "/books/OL1M"}},
+	}, false)
 }
