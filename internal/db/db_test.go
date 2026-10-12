@@ -61,7 +61,7 @@ func TestMigrate(t *testing.T) {
 
 func TestIndexNames(t *testing.T) {
 	names := IndexNames()
-	if len(names) < 10 || !slices.Contains(names, "works_search_tsv_idx") || !slices.Contains(names, "editions_isbn_13_idx") {
+	if len(names) < 10 || !slices.Contains(names, "works_search_tsv_idx") || !slices.Contains(names, "works_popularity_idx") {
 		t.Errorf("index names: %v", names)
 	}
 }

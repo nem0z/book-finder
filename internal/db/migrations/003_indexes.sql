@@ -15,10 +15,10 @@ CREATE INDEX IF NOT EXISTS works_original_language_idx ON works (original_langua
 CREATE INDEX IF NOT EXISTS works_genres_idx ON works USING gin (genres);
 CREATE INDEX IF NOT EXISTS works_subjects_idx ON works USING gin (subjects);
 
--- Popularity ordering / tie-breaking.
-CREATE INDEX IF NOT EXISTS works_popularity_idx ON works ((want_to_read + currently_reading + already_read) DESC);
+-- Popularity ordering / tie-breaking: reading-log entries plus number of ratings.
+CREATE INDEX IF NOT EXISTS works_popularity_idx
+    ON works ((want_to_read + currently_reading + already_read + rating_count) DESC);
 
 -- Joins and lookups.
 CREATE INDEX IF NOT EXISTS work_authors_author_idx ON work_authors (author_id);
-CREATE INDEX IF NOT EXISTS editions_work_idx ON editions (work_id);
-CREATE INDEX IF NOT EXISTS editions_isbn_13_idx ON editions USING gin (isbn_13);
+CREATE INDEX IF NOT EXISTS works_isbn_13_idx ON works (isbn_13);
