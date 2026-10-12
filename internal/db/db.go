@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -18,6 +19,8 @@ import (
 
 // DefaultURL matches the credentials in docker-compose.yml.
 const DefaultURL = "postgres://bookfinder:bookfinder@localhost:5432/bookfinder?sslmode=disable"
+
+const indexesFile = "migrations/003_indexes.sql"
 
 // Arbitrary key so concurrent migrate runs serialise.
 const migrationLockKey = 7_330_221
@@ -206,4 +209,26 @@ func rollback(tx pgx.Tx, version string) {
 	if err := tx.Rollback(context.Background()); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
 		slog.Warn("roll back migration", "version", version, "err", err)
 	}
+}
+
+// IndexesSQL returns the idempotent secondary-index DDL.
+func IndexesSQL() string {
+	b, err := migrationsFS.ReadFile(indexesFile)
+	if err != nil {
+		panic(err)
+	}
+
+	return string(b)
+}
+
+var indexNameRe = regexp.MustCompile(`(?i)CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+(\w+)`)
+
+// IndexNames returns the names of the secondary indexes defined in IndexesSQL.
+func IndexNames() []string {
+	var names []string
+	for _, m := range indexNameRe.FindAllStringSubmatch(IndexesSQL(), -1) {
+		names = append(names, m[1])
+	}
+
+	return names
 }

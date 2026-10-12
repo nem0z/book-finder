@@ -3,7 +3,7 @@
 Describe the book you want in plain language and get recommendations grounded in real catalogue data.
 The AI only ranks and explains books retrieved from our own database, so it can't invent titles or facts.
 
-Status: proof of concept, in progress.
+Status: proof of concept, in progress. See [docs/schema.md](docs/schema.md) for the data model and indexes.
 
 ## Requirements
 

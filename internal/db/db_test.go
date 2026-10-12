@@ -48,6 +48,22 @@ func TestMigrate(t *testing.T) {
 	if !slices.Contains(versions, "001_extensions") {
 		t.Errorf("recorded versions: %v", versions)
 	}
+
+	var indexes int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM pg_indexes WHERE indexname = ANY($1)", IndexNames()).Scan(&indexes); err != nil {
+		t.Fatal(err)
+	}
+
+	if indexes != len(IndexNames()) {
+		t.Errorf("indexes created: %d of %d", indexes, len(IndexNames()))
+	}
+}
+
+func TestIndexNames(t *testing.T) {
+	names := IndexNames()
+	if len(names) < 10 || !slices.Contains(names, "works_search_tsv_idx") || !slices.Contains(names, "editions_isbn_13_idx") {
+		t.Errorf("index names: %v", names)
+	}
 }
 
 func TestMigrationFilesSorted(t *testing.T) {
