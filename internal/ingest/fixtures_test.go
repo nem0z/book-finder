@@ -89,3 +89,31 @@ func redirectsFixture(t *testing.T, dir string) string {
 		{"/type/redirect", "/books/OL97M", map[string]any{"location": "/books/OL1M"}},
 	}, false)
 }
+
+func author(k string) map[string]any {
+	return map[string]any{"author": ref(k), "type": ref("/type/author_role")}
+}
+
+func text(v string) map[string]any { return map[string]any{"type": "/type/text", "value": v} }
+
+// worksFixture: OL1W, OL2W, OL4W, OL6W are fiction candidates; OL3W is not fiction, OL5W is
+// nonfiction, OL7W is malformed.
+func worksFixture(t *testing.T, dir string) string {
+	return dumpFile(t, dir, "works.txt.gz", []rec{
+		{"/type/work", "/works/OL1W", map[string]any{"key": "/works/OL1W", "title": "The Thirst",
+			"authors": []any{author("/authors/OL1A")}, "subjects": []any{"Fiction", "Detective and mystery stories"},
+			"description": text("Harry Hole hunts a killer in Oslo."), "first_publish_date": "2017", "covers": []any{123}}},
+		{"/type/work", "/works/OL2W", map[string]any{"key": "/works/OL2W", "title": "Tørst",
+			"authors": []any{author("/authors/OL1A")}, "subjects": []any{"Fiction", "Norwegian fiction"}}},
+		{"/type/work", "/works/OL3W", map[string]any{"key": "/works/OL3W", "title": "Cookbook",
+			"authors": []any{author("/authors/OL2A")}, "subjects": []any{"Cooking"}}},
+		{"/type/work", "/works/OL4W", map[string]any{"key": "/works/OL4W", "title": "Roman",
+			"authors": []any{author("/authors/OL3A")}, "subjects": []any{"Fiction", "French fiction"}}},
+		{"/type/work", "/works/OL5W", map[string]any{"key": "/works/OL5W", "title": "Facts",
+			"subjects": []any{"Juvenile nonfiction"}}},
+		{"/type/work", "/works/OL6W", map[string]any{"key": "/works/OL6W", "title": "Old Author Key",
+			"authors": []any{author("/authors/OL9A")}, "subjects": []any{"Fiction"}}},
+		{"/type/work", "/works/OL7W", map[string]any{"key": "/works/OL7W", "title": "Broken",
+			"subjects": "Fiction", "authors": 5}},
+	}, true)
+}
