@@ -37,11 +37,6 @@ type Progress struct {
 	Kept       int64 // lines that passed the prefilter
 }
 
-type countingReader struct {
-	r io.Reader
-	n atomic.Int64
-}
-
 // StreamOptions configures Stream.
 type StreamOptions struct {
 	Workers          int
@@ -57,8 +52,32 @@ type Stream[T any] struct {
 
 	cancel  context.CancelFunc
 	done    chan struct{}
-	err     error
+	err     error // written by the reader goroutine, read after done is closed
 	skipped atomic.Int64
+}
+
+// countingReader counts the bytes read from the underlying file, for progress reporting.
+type countingReader struct {
+	r io.Reader
+	n atomic.Int64
+}
+
+// progressReporter tracks Progress and calls onProgress at most every interval.
+type progressReporter struct {
+	p          Progress
+	file       *countingReader
+	interval   time.Duration
+	onProgress func(Progress)
+	last       time.Time
+}
+
+// lineReader splits a reader into lines and hands them to fn.
+type lineReader struct {
+	ctx      context.Context
+	path     string
+	fn       func(line []byte) (kept bool, err error)
+	progress *progressReporter
+	long     []byte // reassembles lines longer than the read buffer
 }
 
 func (p Progress) Percent() float64 {
@@ -90,77 +109,126 @@ func ReadLines(ctx context.Context, path string, interval time.Duration, onProgr
 		return err
 	}
 
-	cr := &countingReader{r: f}
-	var r io.Reader = bufio.NewReaderSize(cr, fileBufferSize)
-	if strings.HasSuffix(path, gzipSuffix) {
-		gz, err := gzip.NewReader(r)
-		if err != nil {
-			return fmt.Errorf("%s: %w", path, err)
-		}
-		defer gz.Close()
+	file := &countingReader{r: f}
+	r, closeDecompressor, err := decompress(path, bufio.NewReaderSize(file, fileBufferSize))
+	if err != nil {
+		return err
+	}
+	defer closeDecompressor()
 
-		r = gz
+	progress := &progressReporter{
+		p:    Progress{Path: path, TotalBytes: info.Size()},
+		file: file, interval: interval, onProgress: onProgress, last: time.Now(),
 	}
 
-	p := Progress{Path: path, TotalBytes: info.Size()}
-	report := func() {
-		if onProgress != nil {
-			p.ReadBytes = cr.n.Load()
-			onProgress(p)
-		}
+	lr := &lineReader{ctx: ctx, path: path, fn: fn, progress: progress}
+
+	return lr.run(bufio.NewReaderSize(r, lineBufferSize))
+}
+
+// decompress wraps r in a gzip reader when path ends in .gz. The returned close function is
+// always safe to call.
+func decompress(path string, r io.Reader) (io.Reader, func(), error) {
+	if !strings.HasSuffix(path, gzipSuffix) {
+		return r, func() {}, nil
 	}
 
-	last := time.Now()
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", path, err)
+	}
 
-	br := bufio.NewReaderSize(r, lineBufferSize)
-	var long []byte
+	return gz, func() { gz.Close() }, nil
+}
+
+// run reads lines until EOF, an error from fn, a read error or cancellation.
+func (lr *lineReader) run(br *bufio.Reader) error {
 	for {
-		chunk, err := br.ReadSlice('\n')
-		if errors.Is(err, bufio.ErrBufferFull) {
-			long = append(long, chunk...)
-			continue
-		}
-
-		line := chunk
-		if len(long) > 0 {
-			long = append(long, chunk...)
-			line = long
-		}
-
-		line = bytes.TrimRight(line, "\r\n")
+		line, err := lr.next(br)
 		if len(line) > 0 {
-			p.Lines++
-			kept, ferr := fn(line)
-			if ferr != nil {
+			if ferr := lr.handle(line); ferr != nil {
 				return ferr
 			}
-
-			if kept {
-				p.Kept++
-			}
 		}
 
-		long = long[:0]
-
 		if err == io.EOF {
-			report()
+			lr.progress.report()
 			return nil
 		}
 
 		if err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+			return fmt.Errorf("%s: %w", lr.path, err)
 		}
 
-		if p.Lines%checkEvery == 0 {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-
-			if interval > 0 && time.Since(last) >= interval {
-				report()
-				last = time.Now()
-			}
+		if err := lr.checkpoint(); err != nil {
+			return err
 		}
+	}
+}
+
+// next returns the next line without its line ending. The slice is valid until the next call.
+func (lr *lineReader) next(br *bufio.Reader) ([]byte, error) {
+	lr.long = lr.long[:0]
+	for {
+		chunk, err := br.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			lr.long = append(lr.long, chunk...)
+			continue
+		}
+
+		line := chunk
+		if len(lr.long) > 0 {
+			lr.long = append(lr.long, chunk...)
+			line = lr.long
+		}
+
+		return bytes.TrimRight(line, "\r\n"), err
+	}
+}
+
+// handle passes one line to fn and updates the line counters.
+func (lr *lineReader) handle(line []byte) error {
+	lr.progress.p.Lines++
+	kept, err := lr.fn(line)
+	if err != nil {
+		return err
+	}
+
+	if kept {
+		lr.progress.p.Kept++
+	}
+
+	return nil
+}
+
+// checkpoint periodically checks for cancellation and reports progress.
+func (lr *lineReader) checkpoint() error {
+	if lr.progress.p.Lines%checkEvery != 0 {
+		return nil
+	}
+
+	if err := lr.ctx.Err(); err != nil {
+		return err
+	}
+
+	lr.progress.maybeReport()
+
+	return nil
+}
+
+func (pr *progressReporter) report() {
+	if pr.onProgress == nil {
+		return
+	}
+
+	pr.p.ReadBytes = pr.file.n.Load()
+	pr.onProgress(pr.p)
+}
+
+func (pr *progressReporter) maybeReport() {
+	if pr.interval > 0 && time.Since(pr.last) >= pr.interval {
+		pr.report()
+		pr.last = time.Now()
 	}
 }
 
@@ -169,61 +237,68 @@ func NewStream[T any](ctx context.Context, path string, opts StreamOptions, filt
 	workers := max(opts.Workers, 1)
 	lines := make(chan []byte, queuePerWorker*workers)
 	out := make(chan T, queuePerWorker*workers)
+	readerDone := make(chan struct{})
 	s := &Stream[T]{C: out, cancel: cancel, done: make(chan struct{})}
 
-	var readErr error
-	readerDone := make(chan struct{})
-	go func() {
-		defer close(readerDone)
-		defer close(lines)
-
-		readErr = ReadLines(ctx, path, opts.ProgressInterval, opts.OnProgress, func(line []byte) (bool, error) {
-			if !filter(line) {
-				return false, nil
-			}
-
-			select {
-			case lines <- bytes.Clone(line):
-				return true, nil
-			case <-ctx.Done():
-				return false, ctx.Err()
-			}
-		})
-	}()
+	go s.read(ctx, path, opts, filter, lines, readerDone)
 
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
-			for line := range lines {
-				v, ok := decode(line)
-				if !ok {
-					s.skipped.Add(1)
-					continue
-				}
-
-				select {
-				case out <- v:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
+		go s.decodeLines(ctx, &wg, lines, out, decode)
 	}
 
-	go func() {
-		wg.Wait()
-		close(out)
-		// Workers can exit early on cancellation while the reader is still unwinding.
-		<-readerDone
-		s.err = readErr
-		cancel()
-		close(s.done)
-	}()
+	go s.finish(&wg, out, readerDone)
 
 	return s
+}
+
+// read sends the lines accepted by filter to the workers and records the read error.
+func (s *Stream[T]) read(ctx context.Context, path string, opts StreamOptions, filter func([]byte) bool, lines chan<- []byte, readerDone chan<- struct{}) {
+	defer close(readerDone)
+	defer close(lines)
+
+	s.err = ReadLines(ctx, path, opts.ProgressInterval, opts.OnProgress, func(line []byte) (bool, error) {
+		if !filter(line) {
+			return false, nil
+		}
+
+		select {
+		case lines <- bytes.Clone(line):
+			return true, nil
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+	})
+}
+
+// decodeLines is one worker: it decodes lines and sends the results until lines is closed.
+func (s *Stream[T]) decodeLines(ctx context.Context, wg *sync.WaitGroup, lines <-chan []byte, out chan<- T, decode func([]byte) (T, bool)) {
+	defer wg.Done()
+
+	for line := range lines {
+		v, ok := decode(line)
+		if !ok {
+			s.skipped.Add(1)
+			continue
+		}
+
+		select {
+		case out <- v:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// finish closes C once every worker is done, then marks the stream finished.
+func (s *Stream[T]) finish(wg *sync.WaitGroup, out chan<- T, readerDone <-chan struct{}) {
+	wg.Wait()
+	close(out)
+	// Workers can exit early on cancellation while the reader is still unwinding.
+	<-readerDone
+	s.cancel()
+	close(s.done)
 }
 
 // Err waits for the stream to finish and returns the read error, if any.
