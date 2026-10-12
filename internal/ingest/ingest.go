@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,16 +24,24 @@ const (
 	// Redirect chains longer than this are treated as loops.
 	maxRedirectHops = 10
 
+	authorKeyPrefix = "/authors/"
+
 	prepareSQL = `
 TRUNCATE works, work_authors, authors;
 DROP TABLE IF EXISTS stage_works, stage_work_stats;
+CREATE UNLOGGED TABLE stage_works (
+    id text, title text, subtitle text, description text, first_publish_year smallint,
+    subjects text[], subject_places text[], subject_people text[], subject_times text[],
+    cover_id bigint, author_ids text[]
+);
 `
 )
 
 var (
 	typeRedirect  = []byte("/type/redirect\t")
+	typeWork      = []byte("/type/work\t")
 	worksPrefix   = []byte("/works/")
-	authorsPrefix = []byte("/authors/")
+	authorsPrefix = []byte(authorKeyPrefix)
 )
 
 // Sources are paths to dump files (.txt.gz or plain .txt).
@@ -53,7 +62,9 @@ type Options struct {
 }
 
 type Stats struct {
-	Redirects int `json:"redirects"`
+	Redirects      int   `json:"redirects"`
+	CandidateWorks int   `json:"candidate_works"`
+	DecodeErrors   int64 `json:"decode_errors"`
 }
 
 type loader struct {
@@ -62,9 +73,12 @@ type loader struct {
 	log     *slog.Logger
 	maxYear int
 
-	redirects map[string]string // full key -> full key
+	redirects     map[string]string   // full key -> full key
+	works         map[string]*workAgg // short work ID -> aggregate
+	authorsNeeded map[string]struct{} // short author IDs referenced by candidate works
 
-	stats Stats
+	decodeErrors atomic.Int64
+	stats        Stats
 }
 
 func newLoader(pool *pgxpool.Pool, opts Options) *loader {
@@ -81,11 +95,13 @@ func newLoader(pool *pgxpool.Pool, opts Options) *loader {
 	}
 
 	return &loader{
-		pool:      pool,
-		opts:      opts,
-		log:       opts.Logger,
-		maxYear:   time.Now().Year() + 1,
-		redirects: map[string]string{},
+		pool:          pool,
+		opts:          opts,
+		log:           opts.Logger,
+		maxYear:       time.Now().Year() + 1,
+		redirects:     map[string]string{},
+		works:         map[string]*workAgg{},
+		authorsNeeded: map[string]struct{}{},
 	}
 }
 
@@ -103,6 +119,7 @@ func Run(ctx context.Context, pool *pgxpool.Pool, opts Options) (Stats, error) {
 	}{
 		{"prepare", l.prepare},
 		{"redirects", l.loadRedirects},
+		{"works", l.loadWorks},
 	}
 
 	for _, s := range steps {
@@ -114,6 +131,8 @@ func Run(ctx context.Context, pool *pgxpool.Pool, opts Options) (Stats, error) {
 
 		l.log.Info("step done", "step", s.name, "took", time.Since(t).Round(time.Millisecond))
 	}
+
+	l.stats.DecodeErrors = l.decodeErrors.Load()
 
 	return l.stats, nil
 }
