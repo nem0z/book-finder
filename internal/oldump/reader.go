@@ -148,7 +148,9 @@ func NewStream[T any](ctx context.Context, path string, opts StreamOptions, filt
 	s := &Stream[T]{C: out, cancel: cancel, done: make(chan struct{})}
 
 	var readErr error
+	readerDone := make(chan struct{})
 	go func() {
+		defer close(readerDone)
 		defer close(lines)
 		readErr = ReadLines(ctx, path, opts.ProgressInterval, opts.OnProgress, func(line []byte) (bool, error) {
 			if !filter(line) {
@@ -186,6 +188,8 @@ func NewStream[T any](ctx context.Context, path string, opts StreamOptions, filt
 	go func() {
 		wg.Wait()
 		close(out)
+		// Workers can exit early on cancellation while the reader is still unwinding.
+		<-readerDone
 		s.err = readErr
 		cancel()
 		close(s.done)
