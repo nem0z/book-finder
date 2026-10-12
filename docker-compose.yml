@@ -1,0 +1,32 @@
+services:
+  db:
+    # Postgres 17 with pgvector (vector index for semantic search).
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: bookfinder
+      POSTGRES_PASSWORD: bookfinder
+      POSTGRES_DB: bookfinder
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    shm_size: 1g
+    # Tuned for bulk loading on a dev machine.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - maintenance_work_mem=1GB
+      - -c
+      - max_wal_size=8GB
+      - -c
+      - checkpoint_timeout=30min
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bookfinder -d bookfinder"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  pgdata:
