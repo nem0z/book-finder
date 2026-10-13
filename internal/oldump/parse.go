@@ -23,7 +23,7 @@ const (
 )
 
 var (
-	worksRefPrefix = []byte(`"/works/OL`)
+	worksRefPrefix = []byte(`"` + WorksPath + idPrefix)
 
 	// Subjects that contain the fiction word but describe non-fiction: "Juvenile nonfiction" (about 42k works
 	// with an English edition and a description in the 2026-09-30 dump), and books about fiction such as

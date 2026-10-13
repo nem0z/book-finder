@@ -30,8 +30,6 @@ CREATE UNLOGGED TABLE stage_works (
 `
 )
 
-var typeWork = []byte("/type/work\t")
-
 // Sources are paths to dump files (.txt.gz or plain .txt).
 type Sources struct {
 	Works      string `json:"works"`

@@ -9,15 +9,8 @@ import (
 	"github.com/nem0z/book-finder/internal/oldump"
 )
 
-const (
-	// Redirect chains longer than this are treated as loops.
-	maxRedirectHops = 10
-
-	worksKeyPrefix  = "/works/"
-	authorKeyPrefix = "/authors/"
-)
-
-var typeRedirect = []byte("/type/redirect\t")
+// Redirect chains longer than this are treated as loops.
+const maxRedirectHops = 10
 
 // redirectStats counts what happened to each redirect line. See docs/redirects.md.
 type redirectStats struct {
@@ -89,7 +82,7 @@ func parseRedirect(line []byte) (from, to string, fixed, ok bool) {
 }
 
 func isWorkOrAuthor(key string) bool {
-	return strings.HasPrefix(key, worksKeyPrefix) || strings.HasPrefix(key, authorKeyPrefix)
+	return strings.HasPrefix(key, oldump.WorksPath) || strings.HasPrefix(key, oldump.AuthorsPath)
 }
 
 // keyKind returns the path of a canonical key, e.g. "/works/".
