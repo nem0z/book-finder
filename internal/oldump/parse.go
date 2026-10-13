@@ -9,8 +9,9 @@ import (
 const (
 	recordColumns = 5 // type, key, revision, last_modified, JSON
 
-	// fictionSubject is the subject that marks a work as fiction (compared case-insensitively).
-	fictionSubject = "Fiction"
+	// fictionWord marks a fiction subject when it appears anywhere in it, in any case:
+	// "Fiction", "Juvenile fiction", "Fiction, Romance, General".
+	fictionWord = "fiction"
 
 	isbn10Length    = 10
 	isbn13Length    = 13
@@ -24,12 +25,15 @@ const (
 var (
 	worksRefPrefix = []byte(`"/works/OL`)
 
-	// Byte prefilter: the fiction subject as a quoted JSON string, in the spellings seen in the dumps.
-	fictionQuoted = [][]byte{
-		[]byte(`"` + fictionSubject + `"`),
-		[]byte(`"` + strings.ToLower(fictionSubject) + `"`),
-		[]byte(`"` + strings.ToUpper(fictionSubject) + `"`),
-	}
+	// Subjects that contain the fiction word but describe non-fiction: "Juvenile nonfiction" (about 42k works
+	// with an English edition and a description in the 2026-09-30 dump), and books about fiction such as
+	// "American fiction, History and criticism" or "Fiction, Technique".
+	nonFictionMarkers = []string{"nonfiction", "non-fiction", "non fiction"}
+	aboutFiction      = []string{"criticism", "authorship", "technique", "study and teaching", "bibliography",
+		"appreciation", "fiction writing"}
+
+	// Byte prefilter: the fiction word's first letter in both cases, used to find candidates quickly.
+	fictionFirst = []byte{fictionWord[0], fictionWord[0] - 'a' + 'A'}
 )
 
 // SplitRecord splits a dump line into its type, key and JSON columns.
@@ -85,10 +89,11 @@ func firstYearInText(s string) int {
 
 func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 
-// IsFiction reports whether the subjects include the fiction subject.
+// IsFiction reports whether any subject is a fiction subject (see isFictionSubject). A work that
+// also has a non-fiction subject still counts.
 func IsFiction(subjects []string) bool {
 	for _, s := range subjects {
-		if strings.EqualFold(strings.TrimSpace(s), fictionSubject) {
+		if isFictionSubject(s) {
 			return true
 		}
 	}
@@ -96,11 +101,44 @@ func IsFiction(subjects []string) bool {
 	return false
 }
 
-// MentionsFiction is a cheap byte-level prefilter run before JSON decoding.
+// isFictionSubject reports whether s contains the fiction word and is not a non-fiction subject.
+func isFictionSubject(s string) bool {
+	s = strings.ToLower(s)
+	if !strings.Contains(s, fictionWord) {
+		return false
+	}
+
+	for _, m := range nonFictionMarkers {
+		if strings.Contains(s, m) {
+			return false
+		}
+	}
+
+	for _, m := range aboutFiction {
+		if strings.Contains(s, m) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// MentionsFiction is a cheap byte-level prefilter run before JSON decoding: it looks for the fiction
+// word in any case ("FIction" is in the dump). It may accept lines without a fiction subject (the
+// word in a description); IsFiction decides.
 func MentionsFiction(line []byte) bool {
-	for _, q := range fictionQuoted {
-		if bytes.Contains(line, q) {
-			return true
+	for _, first := range fictionFirst {
+		for rest := line; ; {
+			i := bytes.IndexByte(rest, first)
+			if i < 0 || len(rest)-i < len(fictionWord) {
+				break
+			}
+
+			if bytes.EqualFold(rest[i:i+len(fictionWord)], []byte(fictionWord)) {
+				return true
+			}
+
+			rest = rest[i+1:]
 		}
 	}
 

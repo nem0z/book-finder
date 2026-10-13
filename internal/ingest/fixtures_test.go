@@ -96,7 +96,7 @@ func author(k string) map[string]any {
 
 func text(v string) map[string]any { return map[string]any{"type": "/type/text", "value": v} }
 
-// worksFixture: OL1W, OL2W, OL4W, OL6W are fiction candidates; OL3W is not fiction, OL5W is
+// worksFixture: OL1W, OL2W, OL4W, OL6W are fiction candidates; OL3W is about fiction, OL5W is
 // nonfiction, OL7W is malformed.
 func worksFixture(t *testing.T, dir string) string {
 	return dumpFile(t, dir, "works.txt.gz", []rec{
@@ -104,9 +104,9 @@ func worksFixture(t *testing.T, dir string) string {
 			"authors": []any{author("/authors/OL1A")}, "subjects": []any{"Fiction", "Detective and mystery stories"},
 			"description": text("Harry Hole hunts a killer in Oslo."), "first_publish_date": "2017", "covers": []any{123}}},
 		{"/type/work", "/works/OL2W", map[string]any{"key": "/works/OL2W", "title": "Tørst",
-			"authors": []any{author("/authors/OL1A")}, "subjects": []any{"Fiction", "Norwegian fiction"}}},
+			"authors": []any{author("/authors/OL1A")}, "subjects": []any{"Norwegian fiction"}}},
 		{"/type/work", "/works/OL3W", map[string]any{"key": "/works/OL3W", "title": "Cookbook",
-			"authors": []any{author("/authors/OL2A")}, "subjects": []any{"Cooking"}}},
+			"authors": []any{author("/authors/OL2A")}, "subjects": []any{"Cooking", "Fiction, History and criticism"}}},
 		{"/type/work", "/works/OL4W", map[string]any{"key": "/works/OL4W", "title": "Roman",
 			"authors": []any{author("/authors/OL3A")}, "subjects": []any{"Fiction", "French fiction"}}},
 		{"/type/work", "/works/OL5W", map[string]any{"key": "/works/OL5W", "title": "Facts",

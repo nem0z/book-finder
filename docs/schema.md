@@ -1,8 +1,10 @@
 # Data model and indexing
 
 The catalogue holds **English-language fiction** from the [Open Library dumps](https://openlibrary.org/developers/dumps):
-works with the subject `Fiction` (any case), at least one English edition, and a description (the work's own or an English
-edition's). Works without a description are left out until another description source is added.
+works with a fiction subject, at least one English edition, and a description (the work's own or an English
+edition's). A fiction subject contains "fiction" in any case (`Fiction`, `Juvenile fiction`, `Fiction, Romance, General`)
+and is not a non-fiction one (`Juvenile nonfiction`) or about fiction (`American fiction, History and criticism`).
+Works without a description are left out until another description source is added.
 
 Years come from Open Library's free-text dates: a plain number (`850`), else the first 4-digit number in the text
 (`June 13, 2005` → 2005).

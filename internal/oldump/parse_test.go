@@ -31,9 +31,14 @@ func TestIsFiction(t *testing.T) {
 		want     bool
 	}{
 		{[]string{"Fiction"}, true},
-		{[]string{"Thrillers", " fiction "}, true},
-		{[]string{"Detective and mystery fiction"}, false},
+		{[]string{"Thrillers", " FICTION "}, true},
+		{[]string{"Detective and mystery fiction"}, true},
+		{[]string{"Fiction, Romance, General"}, true},
 		{[]string{"Juvenile nonfiction"}, false},
+		{[]string{"Non-fiction"}, false},
+		{[]string{"American fiction, History and criticism"}, false},
+		{[]string{"Fiction, Technique"}, false},
+		{[]string{"Nonfiction", "Western stories, fiction"}, true},
 		{[]string{"Cooking"}, false},
 		{nil, false},
 	}
@@ -45,7 +50,9 @@ func TestIsFiction(t *testing.T) {
 	}
 
 	if !MentionsFiction([]byte(`"subjects": ["Fiction"]`)) || !MentionsFiction([]byte(`["fiction"]`)) ||
-		!MentionsFiction([]byte(`["FICTION"]`)) || MentionsFiction([]byte(`["Science fiction"]`)) {
+		!MentionsFiction([]byte(`["FICTION"]`)) || !MentionsFiction([]byte(`["Science fiction"]`)) ||
+		!MentionsFiction([]byte(`["FictIon, Romance"]`)) || MentionsFiction([]byte(`["Cooking"]`)) ||
+		MentionsFiction([]byte(`["Fictio`)) {
 		t.Error("MentionsFiction")
 	}
 }
