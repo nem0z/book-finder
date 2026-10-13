@@ -1,9 +1,7 @@
 package ingest
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -21,11 +19,6 @@ import (
 const (
 	defaultProgressInterval = 15 * time.Second
 
-	// Redirect chains longer than this are treated as loops.
-	maxRedirectHops = 10
-
-	authorKeyPrefix = "/authors/"
-
 	prepareSQL = `
 TRUNCATE works, work_authors, authors;
 DROP TABLE IF EXISTS stage_works, stage_work_stats;
@@ -37,12 +30,7 @@ CREATE UNLOGGED TABLE stage_works (
 `
 )
 
-var (
-	typeRedirect  = []byte("/type/redirect\t")
-	typeWork      = []byte("/type/work\t")
-	worksPrefix   = []byte("/works/")
-	authorsPrefix = []byte(authorKeyPrefix)
-)
+var typeWork = []byte("/type/work\t")
 
 // Sources are paths to dump files (.txt.gz or plain .txt).
 type Sources struct {
@@ -62,9 +50,9 @@ type Options struct {
 }
 
 type Stats struct {
-	Redirects      int   `json:"redirects"`
-	CandidateWorks int   `json:"candidate_works"`
-	DecodeErrors   int64 `json:"decode_errors"`
+	Redirects      redirectStats `json:"redirects"`
+	CandidateWorks int           `json:"candidate_works"`
+	DecodeErrors   int64         `json:"decode_errors"`
 }
 
 type loader struct {
@@ -155,20 +143,6 @@ func (l *loader) progress(step string) func(oldump.Progress) {
 	}
 }
 
-// resolve follows Open Library redirects (merged records) for a full key such as "/works/OL1W".
-func (l *loader) resolve(key string) string {
-	for range maxRedirectHops {
-		next, ok := l.redirects[key]
-		if !ok || next == key {
-			return key
-		}
-
-		key = next
-	}
-
-	return key
-}
-
 // prepare drops secondary indexes (rebuilt in finalize), empties the catalogue and resets staging tables.
 func (l *loader) prepare(ctx context.Context) error {
 	var b strings.Builder
@@ -182,42 +156,4 @@ func (l *loader) prepare(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-// loadRedirects reads merged work and author IDs from the optional redirects dump.
-func (l *loader) loadRedirects(ctx context.Context) error {
-	path := l.opts.Sources.Redirects
-	if path == "" {
-		l.log.Info("no redirects dump; merged records will not be resolved")
-		return nil
-	}
-
-	err := oldump.ReadLines(ctx, path, l.progressInterval(), l.progress("redirects"), l.addRedirect)
-	l.stats.Redirects = len(l.redirects)
-
-	return err
-}
-
-// addRedirect records one work or author redirect line; other redirects are ignored.
-func (l *loader) addRedirect(line []byte) (bool, error) {
-	if !bytes.HasPrefix(line, typeRedirect) {
-		return false, nil
-	}
-
-	_, key, data, ok := oldump.SplitRecord(line)
-	if !ok || !(bytes.HasPrefix(key, worksPrefix) || bytes.HasPrefix(key, authorsPrefix)) {
-		return false, nil
-	}
-
-	var r struct {
-		Location string `json:"location"`
-	}
-
-	if json.Unmarshal(data, &r) != nil || r.Location == "" {
-		return false, nil
-	}
-
-	l.redirects[string(key)] = r.Location
-
-	return true, nil
 }

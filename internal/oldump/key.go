@@ -1,0 +1,88 @@
+package oldump
+
+// Record kinds by the letter that ends an Open Library ID: OL45804W is a work.
+const (
+	workLetter    = 'W'
+	authorLetter  = 'A'
+	editionLetter = 'M'
+
+	worksPath    = "/works/"
+	authorsPath  = "/authors/"
+	editionsPath = "/books/"
+
+	idPrefix = "OL"
+)
+
+// CanonicalKey returns key in its full form, "/<kind>/OL<digits><letter>", and whether it is a
+// valid work, author or edition ID.
+//
+// IDs without their path ("OL45804W", seen in about 7k redirect targets) get the path that matches
+// their final letter. Anything else is invalid: other record types ("/about/team", "/books/ia:..."),
+// a letter that does not match the path ("/authors/OL1W") or a missing letter ("/authors/OL1").
+func CanonicalKey(key string) (string, bool) {
+	if len(key) > 0 && key[0] != '/' {
+		path, ok := pathForLetter(key)
+		if !ok {
+			return "", false
+		}
+
+		key = path + key
+	}
+
+	path, id, ok := splitKey(key)
+	if !ok || !validID(id) {
+		return "", false
+	}
+
+	if want, _ := pathForLetter(id); path != want {
+		return "", false
+	}
+
+	return key, true
+}
+
+// pathForLetter returns the path for an ID's final letter.
+func pathForLetter(id string) (string, bool) {
+	if id == "" {
+		return "", false
+	}
+
+	switch id[len(id)-1] {
+	case workLetter:
+		return worksPath, true
+	case authorLetter:
+		return authorsPath, true
+	case editionLetter:
+		return editionsPath, true
+	default:
+		return "", false
+	}
+}
+
+// splitKey splits "/works/OL1W" into "/works/" and "OL1W".
+func splitKey(key string) (path, id string, ok bool) {
+	for _, p := range []string{worksPath, authorsPath, editionsPath} {
+		if len(key) > len(p) && key[:len(p)] == p {
+			return p, key[len(p):], true
+		}
+	}
+
+	return "", "", false
+}
+
+// validID reports whether id is "OL", at least one digit, then a letter.
+func validID(id string) bool {
+	if len(id) < len(idPrefix)+2 || id[:len(idPrefix)] != idPrefix {
+		return false
+	}
+
+	for _, c := range id[len(idPrefix) : len(id)-1] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+
+	_, ok := pathForLetter(id)
+
+	return ok
+}
