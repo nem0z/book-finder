@@ -85,7 +85,7 @@ func parseRedirect(line []byte) (from, to string, fixed, ok bool) {
 		return "", "", false, false
 	}
 
-	return from, to, to != r.Location, true
+	return from, to, to != strings.TrimSpace(r.Location), true
 }
 
 func isWorkOrAuthor(key string) bool {

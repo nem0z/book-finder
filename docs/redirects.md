@@ -42,8 +42,8 @@ source's type. The full form (with the path) is the correct one.
 
 Implemented in `oldump.CanonicalKey` and `internal/ingest/redirects.go`.
 
-1. **Canonical form.** Every ID is converted to `/<path>/OL<digits><letter>` before use. An ID without
-   its path gets the path matching its last letter (`OL4791619A` → `/authors/OL4791619A`).
+1. **Canonical form.** Every ID is trimmed and converted to `/<path>/OL<digits><letter>` before use. An ID
+   without its path gets the path matching its last letter (`OL4791619A` → `/authors/OL4791619A`).
 2. **Invalid IDs are skipped**: other record types (`/about/team`), Internet Archive identifiers
    (`/books/ia:...`), a letter that does not match the path (`/authors/OL24320672W`), a missing letter
    (`/authors/OL123`).
@@ -54,7 +54,16 @@ Implemented in `oldump.CanonicalKey` and `internal/ingest/redirects.go`.
    chains are loops). A path-less ID in a record therefore resolves exactly like the full one, without
    storing both forms in the map. It returns `""` for invalid IDs, which callers skip.
 
-Result on the 2026-09-30 dump: 1,702,518 redirects kept, 4,576 targets fixed, 116,003 skipped.
+Result on the 2026-09-30 dump: 1,702,519 redirects kept, 4,576 targets fixed, 116,002 skipped:
+
+| Skipped because | Count | Example |
+|---|---|---|
+| Edition redirect (not needed) | 115,912 | `/books/OL13491732M` → `/books/OL13491676M` |
+| Source is not a book record (site pages) | 88 | `/about/people` → `/about/team` |
+| Target of another type | 1 | `/books/OL23693907M` → `/authors/OL6120853A` |
+| Target is not an ID | 1 | `/books/OL7246278M` → `Diplomatarium Islandicum, Bd. 1` |
+
+One author redirect has a stray tab before its target (`"\t/authors/OL3281458A"`); trimming recovers it.
 
 ## Storage: in memory, rebuilt at each load
 

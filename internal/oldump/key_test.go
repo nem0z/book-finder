@@ -13,6 +13,8 @@ func TestCanonicalKey(t *testing.T) {
 		{"OL4791619A", "/authors/OL4791619A", true}, // path-less target: path added from the letter
 		{"OL2329W", "/works/OL2329W", true},
 		{"OL12M", "/books/OL12M", true},
+		{"\t/authors/OL3281458A", "/authors/OL3281458A", true}, // stray whitespace, seen once in the dump
+		{" OL5W ", "/works/OL5W", true},
 		{"/authors/OL24320672W", "", false}, // letter does not match the path
 		{"/authors/OL123", "", false},       // missing letter
 		{"/books/ia:cihm_12345", "", false}, // Internet Archive identifier

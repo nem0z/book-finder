@@ -1,5 +1,7 @@
 package oldump
 
+import "strings"
+
 // Record kinds by the letter that ends an Open Library ID: OL45804W is a work.
 const (
 	workLetter    = 'W'
@@ -20,6 +22,7 @@ const (
 // their final letter. Anything else is invalid: other record types ("/about/team", "/books/ia:..."),
 // a letter that does not match the path ("/authors/OL1W") or a missing letter ("/authors/OL1").
 func CanonicalKey(key string) (string, bool) {
+	key = strings.TrimSpace(key)
 	if len(key) > 0 && key[0] != '/' {
 		path, ok := pathForLetter(key)
 		if !ok {
