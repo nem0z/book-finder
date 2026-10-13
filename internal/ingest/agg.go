@@ -15,6 +15,10 @@ const (
 	coverWeight       = 1
 )
 
+// notALanguage holds MARC codes that name no single language: undetermined, multiple, no linguistic
+// content. Editions tagged with them are not evidence of the original language.
+var notALanguage = map[string]bool{"und": true, "mul": true, "zxx": true}
+
 // workAgg accumulates everything learned about a candidate work from its editions, ratings and
 // reading log. It is only touched by the single consumer goroutine.
 type workAgg struct {
@@ -116,7 +120,7 @@ func (a *workAgg) trackEarliest(e editionFacts) {
 		a.earliestYear = year
 	}
 
-	if e.firstLanguage != "" && (a.earliestLangYr == 0 || year < a.earliestLangYr) {
+	if e.firstLanguage != "" && !notALanguage[e.firstLanguage] && (a.earliestLangYr == 0 || year < a.earliestLangYr) {
 		a.earliestLangYr = year
 		a.earliestLang = e.firstLanguage
 	}
@@ -126,6 +130,10 @@ func (a *workAgg) trackEarliest(e editionFacts) {
 // translated from English is evidence too.
 func (a *workAgg) countTranslation(e editionFacts) {
 	for _, l := range e.translatedFrom {
+		if notALanguage[l] {
+			continue
+		}
+
 		if a.translatedFrom == nil {
 			a.translatedFrom = map[string]int32{}
 		}

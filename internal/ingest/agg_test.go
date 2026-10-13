@@ -61,6 +61,7 @@ func TestOriginalLanguageFallback(t *testing.T) {
 	a.addEdition(editionFacts{english: true, year: 1990, firstLanguage: "eng"})
 	a.addEdition(editionFacts{english: false, year: 1960, firstLanguage: "fre"})
 	a.addEdition(editionFacts{english: false, firstLanguage: "ger"}) // undated: ignored
+	a.addEdition(editionFacts{english: false, year: 1950, firstLanguage: "und", translatedFrom: []string{"mul"}})
 	if got := a.originalLanguage(); got != "fre" {
 		t.Errorf("got %q", got)
 	}
