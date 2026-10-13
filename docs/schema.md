@@ -9,6 +9,11 @@ Works without a description are left out until another description source is add
 Years come from Open Library's free-text dates: a plain number (`850`), else the first 4-digit number in the text
 (`June 13, 2005` → 2005).
 
+Original language is the most frequent `translated_from` across the work's editions, else the language of its earliest
+dated edition (`und`, `mul` and `zxx` are ignored). Checked against Wikidata on the 2026-09-30 dump, `translated_from` is
+right in 94% of the cases where the two disagree; without it, the earliest edition is right 96% of the time when it is
+English and 67% when it is in another language (about 1% of works).
+
 ## Tables
 
 | Table | One row per | Main columns |
