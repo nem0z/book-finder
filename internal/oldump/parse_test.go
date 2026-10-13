@@ -15,7 +15,8 @@ func TestSplitRecord(t *testing.T) {
 
 func TestParseYear(t *testing.T) {
 	for in, want := range map[string]int{
-		"1922": 1922, " 1922 ": 1922, "850": 850, "March 3, 1922": 0, "c1922": 0, "19--": 0, "": 0,
+		"1922": 1922, " 1922 ": 1922, "850": 850, "March 3, 1922": 1922, "c1922": 1922, "[1985?]": 1985,
+		"1999-2000": 1999, "June 13, 2005": 2005, "19--": 0, "": 0, "12345": 0, "May 2, 3000": 0,
 		"3000": 0, "-50": 0,
 	} {
 		if got := ParseYear(in, 2027); got != want {
@@ -44,7 +45,7 @@ func TestIsFiction(t *testing.T) {
 	}
 
 	if !MentionsFiction([]byte(`"subjects": ["Fiction"]`)) || !MentionsFiction([]byte(`["fiction"]`)) ||
-		MentionsFiction([]byte(`["Science fiction"]`)) {
+		!MentionsFiction([]byte(`["FICTION"]`)) || MentionsFiction([]byte(`["Science fiction"]`)) {
 		t.Error("MentionsFiction")
 	}
 }
@@ -56,6 +57,16 @@ func TestEditionWorkKey(t *testing.T) {
 
 	if _, ok := EditionWorkKey([]byte(`{"key": "/books/OL1M"}`)); ok {
 		t.Error("should fail without works")
+	}
+
+	// Seen in the dump: a description with HTML linking the work, before the works field.
+	html := `{"description": {"value": "<a href=\"/works/OL19762825W\">"}, "works": [{"key": "/works/OL19762825W"}]}`
+	if k, ok := EditionWorkKey([]byte(html)); !ok || k != "/works/OL19762825W" {
+		t.Errorf("escaped key: got %q %v", k, ok)
+	}
+
+	if _, ok := EditionWorkKey([]byte(`{"works": [{"key": "/works/OL"}]}`)); ok {
+		t.Error("should fail without digits")
 	}
 }
 
