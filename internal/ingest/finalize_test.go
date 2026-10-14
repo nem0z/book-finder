@@ -59,7 +59,7 @@ func TestRun(t *testing.T) {
 	}
 
 	w := works[0]
-	if w.title != "The Thirst" || w.source != "work" || w.year != 2017 || w.lang != "nor" || w.pages != 512 ||
+	if w.title != "The Thirst" || w.source != "work" || w.year != 2017 || w.lang != "nor" || w.pages != 480 ||
 		w.cover != 123 || len(w.genres) != 2 || !slices.Equal(w.authors, []string{"Jo Nesbø"}) {
 		t.Errorf("OL1W: %+v", w)
 	}

@@ -16,9 +16,14 @@ func TestBestEdition(t *testing.T) {
 		t.Errorf("english editions: %d", a.english)
 	}
 
-	// 1999 (description + pages = 12) beats 2010 (description = 8) and 2001 (pages + isbn + cover = 7).
-	if a.best.year != 1999 || a.best.pages != 250 || a.best.description != "Old blurb." || a.best.isbn13 != "" {
+	// 2001 (pages + isbn + cover = 7) beats 1999 (pages = 4) and 2010 (nothing valid = 0).
+	if a.best.year != 2001 || a.best.pages != 300 || a.best.isbn13 != "9780000000001" || a.best.coverID != 5 {
 		t.Errorf("best: %+v", a.best)
+	}
+
+	// The longest English description, whichever edition it comes from; the German one is ignored.
+	if a.description != "Old blurb." {
+		t.Errorf("description: %q", a.description)
 	}
 }
 
@@ -32,11 +37,11 @@ func TestBestEditionTieGoesToMostRecent(t *testing.T) {
 	}
 }
 
-func TestBestEditionKeepsWorkDescription(t *testing.T) {
+func TestEditionDescriptionOnlyWhenWorkHasNone(t *testing.T) {
 	a := &workAgg{hasDescription: true}
 	a.addEdition(editionFacts{english: true, description: "edition text"})
-	if a.best.description != "" || a.best.score != descriptionWeight {
-		t.Errorf("edition description should not be kept when the work has one: %+v", a.best)
+	if a.description != "" {
+		t.Errorf("edition description should not be kept when the work has one: %q", a.description)
 	}
 }
 

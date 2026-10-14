@@ -107,8 +107,8 @@ func firstISBN13(values []string) string {
 }
 
 // loadEditions reads the editions of candidate works and adds each one to its work's aggregate in
-// memory: English edition count, most complete English edition, earliest year, original language and
-// genres. Nothing is written to the database; editions are not stored.
+// memory: English edition count, most complete English edition, longest description, earliest year,
+// original language and genres. Nothing is written to the database; editions are not stored.
 func (l *loader) loadEditions(ctx context.Context) error {
 	filter := func(line []byte) bool {
 		if !bytes.HasPrefix(line, typeEdition) {

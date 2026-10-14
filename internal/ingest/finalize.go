@@ -101,16 +101,16 @@ func (r workStatsRow) values() []any {
 }
 
 // copyWorkStats COPYs what the editions pass learned about each candidate that will be kept: one
-// with an English edition and a description, its own or its best English edition's.
+// with an English edition and a description: its own, else the longest English edition description.
 func (l *loader) copyWorkStats(ctx context.Context) (int64, error) {
 	rows := make([]workStatsRow, 0, len(l.works))
 	for id, a := range l.works {
-		if a.english == 0 || !(a.hasDescription || a.best.description != "") {
+		if a.english == 0 || !(a.hasDescription || a.description != "") {
 			continue
 		}
 
 		rows = append(rows, workStatsRow{
-			id: id, editionDesc: a.best.description, lang: a.originalLanguage(), isbn13: a.best.isbn13,
+			id: id, editionDesc: a.description, lang: a.originalLanguage(), isbn13: a.best.isbn13,
 			year: int(a.earliestYear), pages: int(a.best.pages), genres: a.genres, coverID: a.best.coverID,
 		})
 	}
