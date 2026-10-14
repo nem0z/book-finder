@@ -15,7 +15,7 @@ const finalizeSQL = `
 INSERT INTO works (
     id, title, subtitle, description, description_source, first_publish_year, original_language,
     page_count, isbn_13, subjects, subject_places, subject_people, subject_times, genres,
-    author_names, cover_id, search_tsv
+    author_names, cover_id, rating_avg, rating_count, search_tsv
 )
 SELECT
     w.id, w.title, w.subtitle,
@@ -24,7 +24,7 @@ SELECT
     coalesce(w.first_publish_year, s.earliest_year),
     s.original_language, s.page_count, s.isbn_13,
     w.subjects, w.subject_places, w.subject_people, w.subject_times, s.genres,
-    an.names, coalesce(w.cover_id, s.cover_id),
+    an.names, coalesce(w.cover_id, s.cover_id), s.rating_avg, s.rating_count,
     setweight(to_tsvector('english', w.title || ' ' || coalesce(w.subtitle, '')), 'A') ||
     setweight(to_tsvector('simple', array_to_string(an.names, ' ')), 'A') ||
     setweight(to_tsvector('english', left(array_to_string(
@@ -83,11 +83,13 @@ type workStatsRow struct {
 	year, pages       int
 	genres            []string
 	coverID           int64
+	ratingAvg         float32
+	ratingCount       int32
 }
 
 func (workStatsRow) columns() []string {
 	return []string{"id", "edition_description", "earliest_year", "original_language", "page_count",
-		"isbn_13", "genres", "cover_id"}
+		"isbn_13", "genres", "cover_id", "rating_avg", "rating_count"}
 }
 
 func (r workStatsRow) values() []any {
@@ -97,7 +99,7 @@ func (r workStatsRow) values() []any {
 	}
 
 	return []any{r.id, nullStr(r.editionDesc), nullInt(r.year), nullStr(r.lang), nullInt(r.pages),
-		nullStr(r.isbn13), genres, nullInt64(r.coverID)}
+		nullStr(r.isbn13), genres, nullInt64(r.coverID), nullFloat32(r.ratingAvg), r.ratingCount}
 }
 
 // copyWorkStats COPYs what the editions pass learned about each candidate that will be kept: one
@@ -112,6 +114,7 @@ func (l *loader) copyWorkStats(ctx context.Context) (int64, error) {
 		rows = append(rows, workStatsRow{
 			id: id, editionDesc: a.description, lang: a.originalLanguage(), isbn13: a.best.isbn13,
 			year: int(a.earliestYear), pages: int(a.best.pages), genres: a.genres, coverID: a.best.coverID,
+			ratingAvg: a.ratingAvg(), ratingCount: a.ratingCount,
 		})
 	}
 

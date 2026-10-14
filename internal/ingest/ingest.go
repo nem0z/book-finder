@@ -28,7 +28,8 @@ CREATE UNLOGGED TABLE stage_works (
 );
 CREATE UNLOGGED TABLE stage_work_stats (
     id text, edition_description text, earliest_year smallint, original_language text,
-    page_count smallint, isbn_13 text, genres text[], cover_id bigint
+    page_count smallint, isbn_13 text, genres text[], cover_id bigint, rating_avg real,
+    rating_count integer
 );
 `
 )
@@ -55,6 +56,7 @@ type Stats struct {
 	CandidateWorks int           `json:"candidate_works"`
 	Editions       int64         `json:"editions"`      // editions of candidate works
 	Authors        int64         `json:"authors"`       // authors of candidate works
+	Ratings        int64         `json:"ratings"`       // ratings of candidate works
 	DecodeErrors   int64         `json:"decode_errors"` // lines that could not be read, all passes
 }
 
@@ -112,6 +114,7 @@ func Run(ctx context.Context, pool *pgxpool.Pool, opts Options) (Stats, error) {
 		{"works", l.loadWorks},
 		{"editions", l.loadEditions},
 		{"authors", l.loadAuthors},
+		{"ratings", l.loadRatings},
 		{"finalize", l.finalize},
 	}
 

@@ -16,13 +16,13 @@ func TestRun(t *testing.T) {
 	dir := t.TempDir()
 	stats, err := Run(ctx, pool, Options{Sources: Sources{
 		Works: worksFixture(t, dir), Editions: editionsFixture(t, dir), Authors: authorsFixture(t, dir),
-		Redirects: redirectsFixture(t, dir),
+		Redirects: redirectsFixture(t, dir), Ratings: ratingsFixture(t, dir),
 	}, Workers: 3, ProgressInterval: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if stats.CandidateWorks != 4 || stats.Authors != 2 {
+	if stats.CandidateWorks != 4 || stats.Authors != 2 || stats.Ratings != 3 {
 		t.Errorf("stats: %+v", stats)
 	}
 
@@ -104,5 +104,36 @@ func TestRun(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM works WHERE search_tsv @@ plainto_tsquery('english', 'Oslo killer')").
 		Scan(&hits); err != nil || hits != 1 {
 		t.Errorf("full-text search: %d %v", hits, err)
+	}
+}
+
+func TestRunRatings(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	if _, err := Run(ctx, pool, Options{Sources: Sources{
+		Works: worksFixture(t, dir), Editions: editionsFixture(t, dir), Authors: authorsFixture(t, dir),
+		Redirects: redirectsFixture(t, dir), Ratings: ratingsFixture(t, dir),
+	}, Workers: 3, ProgressInterval: -1}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]string{}
+	rows, err := pool.Query(ctx, "SELECT id, coalesce(rating_avg::text, 'null') || '/' || rating_count FROM works")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for rows.Next() {
+		var id, r string
+		if err := rows.Scan(&id, &r); err != nil {
+			t.Fatal(err)
+		}
+
+		got[id] = r
+	}
+
+	if got["OL1W"] != "4.5/2" || got["OL4W"] != "3/1" {
+		t.Errorf("ratings: %v", got)
 	}
 }

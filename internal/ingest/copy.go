@@ -80,3 +80,11 @@ func nullInt64(v int64) any {
 
 	return v
 }
+
+func nullFloat32(v float32) any {
+	if v == 0 {
+		return nil
+	}
+
+	return v
+}
