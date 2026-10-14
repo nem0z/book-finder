@@ -50,6 +50,7 @@ type Stats struct {
 	Redirects      redirectStats `json:"redirects"`
 	CandidateWorks int           `json:"candidate_works"`
 	Editions       int64         `json:"editions"`      // editions of candidate works
+	Authors        int64         `json:"authors"`       // authors of candidate works
 	DecodeErrors   int64         `json:"decode_errors"` // lines that could not be read, all passes
 }
 
@@ -106,6 +107,7 @@ func Run(ctx context.Context, pool *pgxpool.Pool, opts Options) (Stats, error) {
 		{"redirects", l.loadRedirects},
 		{"works", l.loadWorks},
 		{"editions", l.loadEditions},
+		{"authors", l.loadAuthors},
 	}
 
 	for _, s := range steps {

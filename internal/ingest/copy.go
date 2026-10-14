@@ -16,19 +16,28 @@ type rowSource struct {
 	row  []any
 }
 
-// copyStream COPYs rows built from a dump stream. toRow runs on the calling goroutine and may
-// return nil to skip an item.
-func copyStream[T any](ctx context.Context, pool *pgxpool.Pool, table string, cols []string, s *oldump.Stream[T], toRow func(T) []any) (int64, error) {
+// copyRow is a row type for COPY: it lists its columns and gives its values in the same order, so
+// both are defined next to the struct's fields.
+type copyRow interface {
+	columns() []string
+	values() []any
+}
+
+// copyStream COPYs the rows of a dump stream into table. keep runs on the calling goroutine, in
+// stream order; rows it rejects are not written.
+func copyStream[T copyRow](ctx context.Context, pool *pgxpool.Pool, table string, s *oldump.Stream[T], keep func(T) bool) (int64, error) {
 	src := &rowSource{next: func() ([]any, bool) {
 		for v := range s.C {
-			if row := toRow(v); row != nil {
-				return row, true
+			if keep(v) {
+				return v.values(), true
 			}
 		}
 
 		return nil, false
 	}}
-	n, err := pool.CopyFrom(ctx, pgx.Identifier{table}, cols, src)
+
+	var zero T
+	n, err := pool.CopyFrom(ctx, pgx.Identifier{table}, zero.columns(), src)
 	if err != nil {
 		s.Stop()
 		return n, fmt.Errorf("copy %s: %w", table, err)

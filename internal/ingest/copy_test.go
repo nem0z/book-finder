@@ -8,6 +8,16 @@ import (
 	"github.com/nem0z/book-finder/internal/oldump"
 )
 
+type numberRow struct{ n int }
+
+func (numberRow) columns() []string { return []string{"n"} }
+func (r numberRow) values() []any   { return []any{r.n} }
+
+type textRow struct{ s string }
+
+func (textRow) columns() []string { return []string{"n"} }
+func (r textRow) values() []any   { return []any{r.s} }
+
 func TestCopyStream(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -19,14 +29,8 @@ func TestCopyStream(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "numbers.txt.gz", "1\n2\n3\nx\n4\n", true)
 	s := oldump.NewStream(ctx, path, oldump.StreamOptions{Workers: 2},
 		func([]byte) bool { return true },
-		func(line []byte) (int, error) { return strconv.Atoi(string(line)) })
-	n, err := copyStream(ctx, pool, "copy_stream_test", []string{"n"}, s, func(v int) []any {
-		if v == 2 {
-			return nil
-		}
-
-		return []any{v}
-	})
+		func(line []byte) (numberRow, error) { n, err := strconv.Atoi(string(line)); return numberRow{n}, err })
+	n, err := copyStream(ctx, pool, "copy_stream_test", s, func(r numberRow) bool { return r.n != 2 })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,8 +50,8 @@ func TestCopyStreamBadTable(t *testing.T) {
 	ctx := context.Background()
 	path := writeFile(t, t.TempDir(), "numbers.txt", "1\n2\n", false)
 	s := oldump.NewStream(ctx, path, oldump.StreamOptions{}, func([]byte) bool { return true },
-		func(line []byte) (string, error) { return string(line), nil })
-	if _, err := copyStream(ctx, pool, "no_such_table", []string{"n"}, s, func(v string) []any { return []any{v} }); err == nil {
+		func(line []byte) (textRow, error) { return textRow{string(line)}, nil })
+	if _, err := copyStream(ctx, pool, "no_such_table", s, func(textRow) bool { return true }); err == nil {
 		t.Error("expected an error") // and the stream must be stopped without hanging
 	}
 }

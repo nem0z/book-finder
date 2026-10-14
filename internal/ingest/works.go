@@ -12,11 +12,22 @@ import (
 
 const maxSubjects = 100
 
+// workRow is one row of the stage_works table.
 type workRow struct {
 	id, title, subtitle, description          string
 	year                                      int
 	subjects, places, people, times, authorID []string
 	coverID                                   int64
+}
+
+func (workRow) columns() []string {
+	return []string{"id", "title", "subtitle", "description", "first_publish_year", "subjects",
+		"subject_places", "subject_people", "subject_times", "cover_id", "author_ids"}
+}
+
+func (r workRow) values() []any {
+	return []any{r.id, r.title, nullStr(r.subtitle), nullStr(r.description), nullInt(r.year),
+		r.subjects, r.places, r.people, r.times, nullInt64(r.coverID), r.authorID}
 }
 
 func cleanList(in []string, limit int) []string {
@@ -107,11 +118,9 @@ func (l *loader) loadWorks(ctx context.Context) error {
 	}
 
 	s := oldump.NewStream(ctx, l.opts.Sources.Works, l.streamOpts("works"), filter, l.decodeWork)
-	cols := []string{"id", "title", "subtitle", "description", "first_publish_year", "subjects",
-		"subject_places", "subject_people", "subject_times", "cover_id", "author_ids"}
-	_, err := copyStream(ctx, l.pool, "stage_works", cols, s, func(r workRow) []any {
+	_, err := copyStream(ctx, l.pool, "stage_works", s, func(r workRow) bool {
 		if _, dup := l.works[r.id]; dup {
-			return nil
+			return false
 		}
 
 		l.works[r.id] = &workAgg{hasDescription: r.description != ""}
@@ -119,8 +128,7 @@ func (l *loader) loadWorks(ctx context.Context) error {
 			l.authorsNeeded[a] = struct{}{}
 		}
 
-		return []any{r.id, r.title, nullStr(r.subtitle), nullStr(r.description), nullInt(r.year),
-			r.subjects, r.places, r.people, r.times, nullInt64(r.coverID), r.authorID}
+		return true
 	})
 	l.countFailures("works", s.Failed(), s.FirstFailure())
 	l.stats.CandidateWorks = len(l.works)
