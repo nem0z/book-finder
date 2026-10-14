@@ -30,7 +30,7 @@ to use another database (default `postgres://bookfinder:bookfinder@localhost:543
 
 ## Load the catalogue
 
-Download the works, editions, authors and redirects dumps from
+Download the works, editions, authors, redirects and ratings dumps from
 [openlibrary.org/developers/dumps](https://openlibrary.org/developers/dumps) (about 17 GB in total; `data/` is
 git-ignored), then:
 
@@ -39,7 +39,8 @@ go run ./cmd/ingest \
   -works data/ol_dump_works_2026-09-30.txt.gz \
   -editions data/ol_dump_editions_2026-09-30.txt.gz \
   -authors data/ol_dump_authors_2026-09-30.txt.gz \
-  -redirects data/ol_dump_redirects_2026-09-30.txt.gz
+  -redirects data/ol_dump_redirects_2026-09-30.txt.gz \
+  -ratings data/ol_dump_ratings_2026-09-30.txt.gz
 ```
 
 It applies the migrations, then rebuilds the catalogue from scratch: the existing `works`, `authors` and

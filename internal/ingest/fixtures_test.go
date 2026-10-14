@@ -166,3 +166,17 @@ func authorsFixture(t *testing.T, dir string) string {
 		{"/type/author", "/authors/OL5A", map[string]any{"key": "/authors/OL5A", "name": []any{1}}},
 	}, true)
 }
+
+// ratingsFixture: OL1W gets 5 and 4 (one through the redirected OL99W), OL4W gets 3. The OL3W rating
+// (not a candidate) and the malformed lines are skipped.
+func ratingsFixture(t *testing.T, dir string) string {
+	return writeFile(t, dir, "ratings.txt.gz", strings.Join([]string{
+		"/works/OL1W\t/books/OL1M\t5\t2018-06-20",
+		"/works/OL99W\t\\N\t4\t2019-01-01",
+		"/works/OL4W\t\\N\t3\t2020-01-01",
+		"/works/OL3W\t\\N\t5\t2020-01-01",
+		"/works/OL1W\t\\N\t9\t2020-01-01",
+		"/works/OL1W\t\\N\tx\t2020-01-01",
+		"/works/OL1W\t\\N",
+	}, "\n")+"\n", true)
+}

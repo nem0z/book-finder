@@ -17,7 +17,7 @@ func TestCheckSources(t *testing.T) {
 	}
 
 	if err := checkSources(ingest.Sources{Works: file, Editions: file, Authors: file}); err != nil {
-		t.Errorf("redirects is optional: %v", err)
+		t.Errorf("redirects and ratings are optional: %v", err)
 	}
 
 	err := checkSources(ingest.Sources{Works: file, Editions: filepath.Join(dir, "missing.txt.gz"), Redirects: dir})

@@ -29,6 +29,7 @@ func main() {
 	flag.StringVar(&src.Editions, "editions", "", "editions dump (required)")
 	flag.StringVar(&src.Authors, "authors", "", "authors dump (required)")
 	flag.StringVar(&src.Redirects, "redirects", "", "redirects dump (optional; merged records are not resolved without it)")
+	flag.StringVar(&src.Ratings, "ratings", "", "ratings dump (optional; works have no ratings without it)")
 	workers := flag.Int("workers", 0, "JSON decode goroutines (default: number of CPUs)")
 	flag.Parse()
 
@@ -77,13 +78,15 @@ func run(ctx context.Context, url string, src ingest.Sources, workers int) error
 // checkSources fails fast on a missing or mistyped file, rather than after the passes before it.
 func checkSources(src ingest.Sources) error {
 	files := []struct{ flag, path string }{
-		{"works", src.Works}, {"editions", src.Editions}, {"authors", src.Authors}, {"redirects", src.Redirects},
+		{"works", src.Works}, {"editions", src.Editions}, {"authors", src.Authors},
+		{"redirects", src.Redirects}, {"ratings", src.Ratings},
 	}
+	optional := map[string]bool{"redirects": true, "ratings": true}
 
 	var errs []error
 	for _, f := range files {
 		if f.path == "" {
-			if f.flag != "redirects" {
+			if !optional[f.flag] {
 				errs = append(errs, fmt.Errorf("-%s is required", f.flag))
 			}
 
