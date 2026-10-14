@@ -15,7 +15,7 @@ func TestLoadRedirects(t *testing.T) {
 		t.Errorf("stats: %+v", s)
 	}
 
-	if got := l.redirects.Resolve("/authors/OL9A"); got != "/authors/OL1A" {
+	if got, err := l.redirects.Resolve("/authors/OL9A"); err != nil || got != "/authors/OL1A" {
 		t.Errorf("target without its path: %q", got)
 	}
 }

@@ -71,13 +71,13 @@ func (l *loader) newWorkRow(id, title string, w *oldump.Work) workRow {
 }
 
 // resolveAuthors returns the short IDs of a work's authors in order, following redirects and
-// dropping duplicates and non-author keys.
+// dropping duplicates and keys that are invalid, loop or are not authors.
 func (l *loader) resolveAuthors(authors []oldump.WorkAuthor) []string {
 	ids := []string{}
 	seen := map[string]bool{}
 	for _, a := range authors {
-		k := l.redirects.Resolve(a.Key)
-		if !strings.HasPrefix(k, oldump.AuthorsPath) {
+		k, err := l.redirects.Resolve(a.Key)
+		if err != nil || !strings.HasPrefix(k, oldump.AuthorsPath) {
 			continue
 		}
 

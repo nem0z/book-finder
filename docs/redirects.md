@@ -34,7 +34,7 @@ Measured on `ol_dump_redirects_2026-09-30.txt.gz` (71.6 MB):
 | Targets without their path (e.g. `OL4791619A`) | 6,942 (2,329 W, 2,247 A, 2,366 M) |
 | Targets whose path does not match the source's type | ~13 |
 | Redirects needing more than one hop | 163,308 (longest chain: 9) |
-| Loops | 26 |
+| Redirects to itself | 26 |
 
 Path-less IDs only appear as **targets**, never as sources, and their letter always matches the
 source's type. The full form (with the path) is the correct one.
@@ -44,12 +44,14 @@ source's type. The full form (with the path) is the correct one.
 One map per type (work, author, edition), from old ID number to new ID number
 (`/works/OL45804W` is 45804 in the work map), with two methods:
 
-- **`Add(from, to)`** fixes both keys and stores the redirect. It returns false, and stores nothing, when
-  either key is invalid or the two keys are of different kinds (work → edition).
-- **`Resolve(key)`** fixes the key, then follows redirects up to 10 hops (longer chains are loops). It
-  returns `""` for an invalid key, which callers skip. Every key read from a record (a work's authors, an
-  edition's work, ratings, reading log) goes through `Resolve` before use.
-
+- **`Add(from, to)`** fixes both keys and stores the redirect. It returns an error, and stores nothing,
+  when either key is invalid (`ErrInvalidKey`, with the reason) or the two keys are of different kinds
+  (`ErrKindMismatch`, e.g. work → edition). The loader counts these as skipped.
+- **`Resolve(key)`** fixes the key, then follows redirects. A record redirecting to itself ends the chain.
+  It returns `ErrInvalidKey` for an invalid key, and `ErrRedirectLoop` when the key is still redirected
+  after 10 hops (the longest chain in the dump is 9, and the dump has no loops). Callers skip keys that
+  return an error. Every key read from a record (a work's authors, an edition's work, ratings, reading log)
+  goes through `Resolve` before use.
 Fixing a key (private helper):
 
 1. Surrounding whitespace is trimmed.
@@ -77,7 +79,7 @@ Edition redirects (115,912) are kept too: nothing follows them yet, and they cos
 | Read + decompress the dump | ~5 s |
 | Build the map | ~0.4 s |
 | Memory | ~29 MB |
-| `Resolve`, key not redirected / redirected | ~156 ns / ~361 ns |
+| `Resolve`, key not redirected / redirected | ~240 ns / ~405 ns |
 
 The map is rebuilt from the redirects dump at the start of every load and is not stored in Postgres:
 
@@ -85,8 +87,10 @@ The map is rebuilt from the redirects dump at the start of every load and is not
 - each monthly dump adds new merges, so a stored table would need refreshing anyway;
 - only the loader needs it; nothing else translates old IDs today.
 
-**Numbers rather than full keys:** a map keyed by the full text key used ~190 MB. With the same key
-fixing, it was also slightly slower: ~175 ns and ~400 ns for the two cases above.
+**Numbers rather than full keys:** a map keyed by the full text key used ~190 MB instead of ~29 MB. Its
+lookups took ~175 ns and ~400 ns for the two cases above: faster for keys that are not redirected,
+because it returns the key without rebuilding it. That is about 4 s over the 56.8M editions, which does
+not justify 160 MB.
 
 ## Checked: edition work references
 

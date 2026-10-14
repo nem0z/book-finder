@@ -1,6 +1,8 @@
 package oldump
 
 import (
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -17,6 +19,12 @@ const (
 
 	// Redirect chains longer than this are treated as loops.
 	maxRedirectHops = 10
+)
+
+var (
+	ErrInvalidKey   = errors.New("invalid Open Library key")
+	ErrKindMismatch = errors.New("redirect between different kinds of record")
+	ErrRedirectLoop = errors.New("redirect loop")
 )
 
 // kind is the type of record a key points to. The number in an ID is unique within a kind only:
@@ -67,73 +75,78 @@ func (r *Redirects) mapFor(k kind) map[uint32]uint32 {
 	}
 }
 
-// Add registers a redirect. It returns false, and records nothing, when either key is invalid or the
-// two keys are of different kinds (a work redirected to an edition).
-func (r *Redirects) Add(from, to string) bool {
-	fromKind, fromNum, _, okFrom := parseKey(from)
-	toKind, toNum, _, okTo := parseKey(to)
-	if !okFrom || !okTo || fromKind != toKind {
-		return false
+// Add registers a redirect. It returns an error, and records nothing, when either key is invalid or
+// the two keys are of different kinds (a work redirected to an edition).
+func (r *Redirects) Add(from, to string) error {
+	fromKind, fromNum, err := parseKey(from)
+	if err != nil {
+		return fmt.Errorf("redirect source: %w", err)
+	}
+
+	toKind, toNum, err := parseKey(to)
+	if err != nil {
+		return fmt.Errorf("redirect target: %w", err)
+	}
+
+	if fromKind != toKind {
+		return fmt.Errorf("%w: %q -> %q", ErrKindMismatch, from, to)
 	}
 
 	r.mapFor(fromKind)[fromNum] = toNum
 
-	return true
+	return nil
 }
 
 // Resolve returns the current full key for a key found in any record: it fixes the key, then
-// follows redirects. It returns "" when key is not a valid work, author or edition key.
-func (r *Redirects) Resolve(key string) string {
-	k, n, full, ok := parseKey(key)
-	if !ok {
-		return ""
+// follows redirects. It returns an error when the key is invalid or the redirects loop.
+func (r *Redirects) Resolve(key string) (string, error) {
+	k, n, err := parseKey(key)
+	if err != nil {
+		return "", err
 	}
 
 	m := r.mapFor(k)
-	start := n
-	for range maxRedirectHops {
-		next, ok := m[n]
-		if !ok || next == n {
-			break
+	next, ok := m[n]
+	for hops := 0; ok && next != n; hops++ {
+		if hops == maxRedirectHops {
+			return "", fmt.Errorf("%w: %q still redirected after %d hops", ErrRedirectLoop, key, maxRedirectHops)
 		}
 
 		n = next
+		next, ok = m[n]
 	}
 
-	if n == start {
-		return full
-	}
-
-	return kinds[k].path + idPrefix + strconv.FormatUint(uint64(n), 10) + string(kinds[k].letter)
+	return kinds[k].path + idPrefix + strconv.FormatUint(uint64(n), 10) + string(kinds[k].letter), nil
 }
 
-// parseKey returns key's kind, ID number and full form ("/<path>/OL<digits><letter>"), and whether
-// it is a valid work, author or edition key. Surrounding whitespace is trimmed and a missing path is
-// added from the ID's last letter ("OL4791619A" -> "/authors/OL4791619A"). A key whose path and
-// letter disagree ("/authors/OL1W") is invalid.
-func parseKey(key string) (k kind, n uint32, full string, ok bool) {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return 0, 0, "", false
+// parseKey returns the kind and ID number of a work, author or edition key, or an error saying why
+// the key is invalid. Surrounding whitespace is trimmed and a missing path is accepted, the kind
+// coming from the ID's last letter ("OL4791619A" is an author). A key whose path and letter disagree
+// ("/authors/OL1W") is invalid.
+func parseKey(key string) (kind, uint32, error) {
+	trimmed := strings.TrimSpace(key)
+	if trimmed == "" {
+		return 0, 0, fmt.Errorf("%w: empty", ErrInvalidKey)
 	}
 
-	k, ok = kindForLetter(key[len(key)-1])
+	k, ok := kindForLetter(trimmed[len(trimmed)-1])
 	if !ok {
-		return 0, 0, "", false
+		return 0, 0, fmt.Errorf("%w %q: does not end with W, A or M", ErrInvalidKey, key)
 	}
 
-	id := key
-	if key[0] == '/' {
-		if id, ok = strings.CutPrefix(key, kinds[k].path); !ok {
-			return 0, 0, "", false
+	id := trimmed
+	if trimmed[0] == '/' {
+		if id, ok = strings.CutPrefix(trimmed, kinds[k].path); !ok {
+			return 0, 0, fmt.Errorf("%w %q: path does not match the letter %c", ErrInvalidKey, key, kinds[k].letter)
 		}
-	} else {
-		key = kinds[k].path + key
 	}
 
-	n, ok = idNumber(id)
+	n, err := idNumber(id)
+	if err != nil {
+		return 0, 0, fmt.Errorf("%w %q: %w", ErrInvalidKey, key, err)
+	}
 
-	return k, n, key, ok
+	return k, n, nil
 }
 
 func kindForLetter(c byte) (kind, bool) {
@@ -148,18 +161,21 @@ func kindForLetter(c byte) (kind, bool) {
 
 // idNumber returns the number in "OL<digits><letter>". Leading zeros are rejected so that two
 // spellings cannot share a number; none appear in the dumps.
-func idNumber(id string) (uint32, bool) {
+func idNumber(id string) (uint32, error) {
 	digits, ok := strings.CutPrefix(id, idPrefix)
 	if !ok || len(digits) < 2 {
-		return 0, false
+		return 0, fmt.Errorf("not OL<digits><letter>")
 	}
 
 	digits = digits[:len(digits)-1]
 	if digits[0] == '0' || digits[0] == '+' {
-		return 0, false
+		return 0, fmt.Errorf("number %q has a leading zero or sign", digits)
 	}
 
 	n, err := strconv.ParseUint(digits, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("number %q is not a 32-bit number", digits)
+	}
 
-	return uint32(n), err == nil
+	return uint32(n), nil
 }

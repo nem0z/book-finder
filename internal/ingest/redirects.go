@@ -8,7 +8,7 @@ import (
 	"github.com/nem0z/book-finder/internal/oldump"
 )
 
-// redirectStats counts redirect lines kept and skipped (invalid keys, or a target of another kind).
+// redirectStats counts redirect lines kept and skipped (malformed line, invalid key, or a target of another kind).
 type redirectStats struct {
 	Kept    int `json:"kept"`
 	Skipped int `json:"skipped"`
@@ -40,8 +40,14 @@ func (l *loader) addRedirect(line []byte) (bool, error) {
 		Location string `json:"location"`
 	}
 
-	if !ok || json.Unmarshal(data, &r) != nil || !l.redirects.Add(string(key), r.Location) {
+	if !ok || json.Unmarshal(data, &r) != nil {
 		l.stats.Redirects.Skipped++
+		return false, nil
+	}
+
+	if err := l.redirects.Add(string(key), r.Location); err != nil {
+		l.stats.Redirects.Skipped++
+		l.log.Debug("redirect skipped", "err", err)
 		return false, nil
 	}
 
