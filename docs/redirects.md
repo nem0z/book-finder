@@ -38,52 +38,55 @@ Measured on `ol_dump_redirects_2026-09-30.txt.gz` (71.6 MB):
 Path-less IDs only appear as **targets**, never as sources, and their letter always matches the
 source's type. The full form (with the path) is the correct one.
 
-## Rules
+## The `oldump.Redirects` type
 
-Implemented in `oldump.CanonicalKey` and `internal/ingest/redirects.go`.
+A map from old key to new key, with two methods:
 
-1. **Canonical form.** Every ID is trimmed and converted to `/<path>/OL<digits><letter>` before use. An ID
-   without its path gets the path matching its last letter (`OL4791619A` → `/authors/OL4791619A`).
-2. **Invalid IDs are skipped**: other record types (`/about/team`), Internet Archive identifiers
-   (`/books/ia:...`), a letter that does not match the path (`/authors/OL24320672W`), a missing letter
-   (`/authors/OL123`).
-3. **Only work and author redirects are kept.** Editions are not stored, so their redirects are never
-   followed. A redirect whose target is a different type (work → edition) is skipped.
-4. **Resolving.** `resolve(id)` converts any ID found in a record (work author lists, edition work
-   references, ratings, reading log) to its canonical form, then follows redirects up to 10 hops (longer
-   chains are loops). A path-less ID in a record therefore resolves exactly like the full one, without
-   storing both forms in the map. It returns `""` for invalid IDs, which callers skip.
+- **`Add(from, to)`** fixes both keys and stores the redirect. It returns false, and stores nothing, when
+  either key is invalid or the two keys are of different kinds (work → edition).
+- **`Resolve(key)`** fixes the key, then follows redirects up to 10 hops (longer chains are loops). It
+  returns `""` for an invalid key, which callers skip. Every key read from a record (a work's authors, an
+  edition's work, ratings, reading log) goes through `Resolve` before use.
 
-Result on the 2026-09-30 dump: 1,702,519 redirects kept, 4,576 targets fixed, 116,002 skipped:
+Fixing a key (private helper):
+
+1. Surrounding whitespace is trimmed.
+2. A key without its path gets the path matching its last letter (`OL4791619A` → `/authors/OL4791619A`).
+   A path-less key in a record therefore resolves exactly like the full one, without storing both forms.
+3. Anything that is not `/<path>/OL<digits><letter>` with a letter matching the path is invalid: site pages
+   (`/about/team`), Internet Archive identifiers (`/books/ia:...`), a mismatched letter
+   (`/authors/OL24320672W`), a missing letter (`/authors/OL123`).
+
+Result on the 2026-09-30 dump: 1,818,431 redirects kept (4,576 targets needed their path added), 90 skipped:
 
 | Skipped because | Count | Example |
 |---|---|---|
-| Edition redirect (not needed) | 115,912 | `/books/OL13491732M` → `/books/OL13491676M` |
 | Source is not a book record (site pages) | 88 | `/about/people` → `/about/team` |
 | Target of another type | 1 | `/books/OL23693907M` → `/authors/OL6120853A` |
 | Target is not an ID | 1 | `/books/OL7246278M` → `Diplomatarium Islandicum, Bd. 1` |
 
 One author redirect has a stray tab before its target (`"\t/authors/OL3281458A"`); trimming recovers it.
+Edition redirects (115,912) are kept too: nothing follows them yet, but filtering them out would add a rule
+for about 35 MB.
 
 ## Storage: in memory, rebuilt at each load
 
 | | |
 |---|---|
-| Read + decompress + build the map | ~4.5 s |
-| Memory (map of full IDs, works and authors only) | ~154 MB |
+| Read + decompress + build the map | ~6 s |
+| Memory (map of full keys) | ~190 MB |
 
 The map is rebuilt from the redirects dump at the start of every load and is not stored in Postgres:
 
-- it is cheap to rebuild (~5 s) compared with the rest of the load;
+- it is cheap to rebuild (~6 s) compared with the rest of the load;
 - each monthly dump adds new merges, so a stored table would need refreshing anyway;
 - only the loader needs it; nothing else translates old IDs today.
 
 **Considered and rejected:** keying the map by the numeric part of the ID (`OL45804W` → `45804`, one
-map per type). It would use ~28 MB instead of ~154 MB, but a lookup was slower in a benchmark
-(~180 ns vs ~83 ns, because the number must be parsed first), and 154 MB is acceptable.
+map per type). It would use far less memory, but a lookup was slower in a benchmark (~180 ns vs ~83 ns,
+because the number must be parsed first), and ~190 MB is acceptable.
 
-## Known gap
+## Checked: edition work references
 
-The editions pass finds an edition's work ID by searching the raw line for `"/works/OL` before decoding
-(to skip most of the editions file cheaply). An edition whose work reference has no path would be
-missed by that search. To check when the editions pass is built, using the editions dump.
+The editions pass finds an edition's work key by searching the raw line for `"/works/OL` before decoding.
+An edition whose work reference had no path would be missed; the 2026-09-30 editions dump has none.

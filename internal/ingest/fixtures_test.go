@@ -81,13 +81,13 @@ func dumpFile(t *testing.T, dir, name string, recs []rec, gz bool) string {
 
 func ref(k string) map[string]any { return map[string]any{"key": k} }
 
-// redirectsFixture: 3 work/author redirects kept (one target without its path), 6 skipped.
+// redirectsFixture: 4 redirects kept (one target without its path), 5 skipped.
 func redirectsFixture(t *testing.T, dir string) string {
 	return dumpFile(t, dir, "redirects.txt", []rec{
 		{"/type/redirect", "/works/OL99W", map[string]any{"location": "/works/OL1W"}},
 		{"/type/redirect", "/works/OL98W", map[string]any{"location": "/works/OL6W"}},
 		{"/type/redirect", "/authors/OL9A", map[string]any{"location": "OL1A"}},           // path-less target
-		{"/type/redirect", "/books/OL97M", map[string]any{"location": "/books/OL1M"}},     // edition: not needed
+		{"/type/redirect", "/books/OL97M", map[string]any{"location": "/books/OL1M"}},     // edition
 		{"/type/redirect", "/works/OL96W", map[string]any{"location": "/books/OL2M"}},     // other kind
 		{"/type/redirect", "/authors/OL95W", map[string]any{"location": "/authors/OL1A"}}, // letter mismatch
 		{"/type/redirect", "/books/ia:cihm_1", map[string]any{"location": "/books/OL3M"}}, // odd key

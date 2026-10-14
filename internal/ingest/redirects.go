@@ -4,22 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"strings"
 
 	"github.com/nem0z/book-finder/internal/oldump"
 )
 
-// Redirect chains longer than this are treated as loops.
-const maxRedirectHops = 10
-
-// redirectStats counts what happened to each redirect line. See docs/redirects.md.
+// redirectStats counts redirect lines kept and skipped (invalid keys, or a target of another kind).
 type redirectStats struct {
-	Kept         int `json:"kept"`
-	FixedTargets int `json:"fixed_targets"` // target had no path; it was added from the ID's letter
-	Skipped      int `json:"skipped"`       // not a work or author, malformed, or target of another kind
+	Kept    int `json:"kept"`
+	Skipped int `json:"skipped"`
 }
 
-// loadRedirects builds the in-memory map of merged work and author IDs from the optional redirects dump.
+// loadRedirects fills l.redirects from the optional redirects dump.
 func (l *loader) loadRedirects(ctx context.Context) error {
 	path := l.opts.Sources.Redirects
 	if path == "" {
@@ -28,84 +23,29 @@ func (l *loader) loadRedirects(ctx context.Context) error {
 	}
 
 	err := oldump.ReadLines(ctx, path, l.progressInterval(), l.progress("redirects"), l.addRedirect)
-	l.log.Info("redirects loaded", "kept", l.stats.Redirects.Kept,
-		"fixed_targets", l.stats.Redirects.FixedTargets, "skipped", l.stats.Redirects.Skipped)
+	l.log.Info("redirects loaded", "kept", l.stats.Redirects.Kept, "skipped", l.stats.Redirects.Skipped)
 
 	return err
 }
 
-// addRedirect records one redirect line in canonical form; non-redirect lines are ignored.
+// addRedirect registers one redirect line; other record types are ignored.
 func (l *loader) addRedirect(line []byte) (bool, error) {
 	if !bytes.HasPrefix(line, typeRedirect) {
 		return false, nil
 	}
 
-	from, to, fixed, ok := parseRedirect(line)
-	if !ok {
-		l.stats.Redirects.Skipped++
-		return false, nil
-	}
-
-	if fixed {
-		l.stats.Redirects.FixedTargets++
-	}
-
-	l.redirects[from] = to
-	l.stats.Redirects.Kept++
-
-	return true, nil
-}
-
-// parseRedirect returns the canonical source and target of a work or author redirect, and whether
-// the target's path had to be added. Edition redirects are not needed: editions are not stored.
-func parseRedirect(line []byte) (from, to string, fixed, ok bool) {
 	_, key, data, ok := oldump.SplitRecord(line)
-	if !ok {
-		return "", "", false, false
-	}
 
 	var r struct {
 		Location string `json:"location"`
 	}
 
-	if json.Unmarshal(data, &r) != nil {
-		return "", "", false, false
+	if !ok || json.Unmarshal(data, &r) != nil || !l.redirects.Add(string(key), r.Location) {
+		l.stats.Redirects.Skipped++
+		return false, nil
 	}
 
-	from, okFrom := oldump.CanonicalKey(string(key))
-	to, okTo := oldump.CanonicalKey(r.Location)
-	if !okFrom || !okTo || keyKind(from) != keyKind(to) || !isWorkOrAuthor(from) {
-		return "", "", false, false
-	}
+	l.stats.Redirects.Kept++
 
-	return from, to, to != strings.TrimSpace(r.Location), true
-}
-
-func isWorkOrAuthor(key string) bool {
-	return strings.HasPrefix(key, oldump.WorksPath) || strings.HasPrefix(key, oldump.AuthorsPath)
-}
-
-// keyKind returns the path of a canonical key, e.g. "/works/".
-func keyKind(key string) string {
-	return key[:strings.LastIndexByte(key, '/')+1]
-}
-
-// resolve returns the current canonical ID for a work or author ID found in any record: it adds a
-// missing path, then follows redirects (merged records). It returns "" when key is not a valid ID.
-func (l *loader) resolve(key string) string {
-	key, ok := oldump.CanonicalKey(key)
-	if !ok {
-		return ""
-	}
-
-	for range maxRedirectHops {
-		next, ok := l.redirects[key]
-		if !ok || next == key {
-			return key
-		}
-
-		key = next
-	}
-
-	return key
+	return true, nil
 }

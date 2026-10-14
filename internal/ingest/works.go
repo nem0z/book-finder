@@ -76,7 +76,7 @@ func (l *loader) resolveAuthors(authors []oldump.WorkAuthor) []string {
 	ids := []string{}
 	seen := map[string]bool{}
 	for _, a := range authors {
-		k := l.resolve(a.Key)
+		k := l.redirects.Resolve(a.Key)
 		if !strings.HasPrefix(k, oldump.AuthorsPath) {
 			continue
 		}

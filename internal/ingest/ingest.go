@@ -59,7 +59,7 @@ type loader struct {
 	log     *slog.Logger
 	maxYear int
 
-	redirects     map[string]string   // full key -> full key
+	redirects     oldump.Redirects
 	works         map[string]*workAgg // short work ID -> aggregate
 	authorsNeeded map[string]struct{} // short author IDs referenced by candidate works
 
@@ -85,7 +85,7 @@ func newLoader(pool *pgxpool.Pool, opts Options) *loader {
 		opts:          opts,
 		log:           opts.Logger,
 		maxYear:       time.Now().Year() + 1,
-		redirects:     map[string]string{},
+		redirects:     oldump.Redirects{},
 		works:         map[string]*workAgg{},
 		authorsNeeded: map[string]struct{}{},
 	}
