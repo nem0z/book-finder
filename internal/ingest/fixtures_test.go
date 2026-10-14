@@ -152,3 +152,17 @@ func editionsFixture(t *testing.T, dir string) string {
 			"languages": eng}},
 	}, true)
 }
+
+// authorsFixture: OL1A and OL3A are referenced by worksFixture's candidates. OL2A is not, OL4A has
+// no name and OL5A has broken JSON.
+func authorsFixture(t *testing.T, dir string) string {
+	return dumpFile(t, dir, "authors.txt.gz", []rec{
+		{"/type/author", "/authors/OL1A", map[string]any{"key": "/authors/OL1A", "name": "Jo Nesbø ",
+			"birth_date": "29 March 1960", "remote_ids": map[string]any{"wikidata": "Q123"}}},
+		{"/type/author", "/authors/OL2A", map[string]any{"key": "/authors/OL2A", "name": "Cook"}},
+		{"/type/author", "/authors/OL3A", map[string]any{"key": "/authors/OL3A", "name": "Émile Zola",
+			"death_date": "1902"}},
+		{"/type/author", "/authors/OL4A", map[string]any{"key": "/authors/OL4A", "name": " "}},
+		{"/type/author", "/authors/OL5A", map[string]any{"key": "/authors/OL5A", "name": []any{1}}},
+	}, true)
+}
