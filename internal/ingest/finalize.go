@@ -75,36 +75,46 @@ func (l *loader) finalize(ctx context.Context) error {
 	return nil
 }
 
+// workStatsRow is one row of stage_work_stats: what the editions pass learned about a kept work.
+type workStatsRow struct {
+	id                string
+	editionDesc, lang string
+	isbn13            string
+	year, pages       int
+	genres            []string
+	coverID           int64
+}
+
+func (workStatsRow) columns() []string {
+	return []string{"id", "edition_description", "earliest_year", "original_language", "page_count",
+		"isbn_13", "genres", "cover_id"}
+}
+
+func (r workStatsRow) values() []any {
+	genres := r.genres
+	if genres == nil {
+		genres = []string{}
+	}
+
+	return []any{r.id, nullStr(r.editionDesc), nullInt(r.year), nullStr(r.lang), nullInt(r.pages),
+		nullStr(r.isbn13), genres, nullInt64(r.coverID)}
+}
+
 // copyWorkStats COPYs what the editions pass learned about each candidate that will be kept: one
 // with an English edition and a description, its own or its best English edition's.
 func (l *loader) copyWorkStats(ctx context.Context) (int64, error) {
-	ids := make([]string, 0, len(l.works))
+	rows := make([]workStatsRow, 0, len(l.works))
 	for id, a := range l.works {
-		if a.english > 0 && (a.hasDescription || a.best.description != "") {
-			ids = append(ids, id)
+		if a.english == 0 || !(a.hasDescription || a.best.description != "") {
+			continue
 		}
+
+		rows = append(rows, workStatsRow{
+			id: id, editionDesc: a.best.description, lang: a.originalLanguage(), isbn13: a.best.isbn13,
+			year: int(a.earliestYear), pages: int(a.best.pages), genres: a.genres, coverID: a.best.coverID,
+		})
 	}
 
-	i := 0
-	src := &rowSource{next: func() ([]any, bool) {
-		if i == len(ids) {
-			return nil, false
-		}
-
-		id := ids[i]
-		a := l.works[id]
-		i++
-
-		genres := a.genres
-		if genres == nil {
-			genres = []string{}
-		}
-
-		return []any{id, nullStr(a.best.description), nullInt(int(a.earliestYear)), nullStr(a.originalLanguage()),
-			nullInt(int(a.best.pages)), nullStr(a.best.isbn13), genres, nullInt64(a.best.coverID)}, true
-	}}
-	cols := []string{"id", "edition_description", "earliest_year", "original_language", "page_count",
-		"isbn_13", "genres", "cover_id"}
-
-	return l.pool.CopyFrom(ctx, pgx.Identifier{"stage_work_stats"}, cols, src)
+	return l.pool.CopyFrom(ctx, pgx.Identifier{"stage_work_stats"}, workStatsRow{}.columns(),
+		pgx.CopyFromSlice(len(rows), func(i int) ([]any, error) { return rows[i].values(), nil }))
 }
