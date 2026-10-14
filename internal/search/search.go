@@ -20,6 +20,29 @@ const (
 	efSearch = 200
 )
 
+// semanticSQL returns the $8 works nearest to the $1 vector computed by model $2. Filters are applied
+// while walking the HNSW index (pgvector iterative scans), so strict filters still return up to $8
+// results. relaxed_order may return rows slightly out of order, hence the outer sort.
+const semanticSQL = `
+WITH nearest AS MATERIALIZED (
+    SELECT w.id, w.title, w.author_names, coalesce(w.first_publish_year, 0) AS year,
+           coalesce(w.page_count, 0) AS pages, coalesce(w.original_language, '') AS lang,
+           w.description, w.rating_count, e.embedding <=> $1::halfvec AS distance
+    FROM work_embeddings e
+    JOIN works w ON w.id = e.work_id
+    WHERE e.model = $2
+      AND ($3 = 0 OR w.first_publish_year >= $3)
+      AND ($4 = 0 OR w.first_publish_year <= $4)
+      AND ($5 = 0 OR w.page_count >= $5)
+      AND ($6 = 0 OR w.page_count <= $6)
+      AND ($7 = '' OR w.original_language = $7)
+    ORDER BY e.embedding <=> $1::halfvec
+    LIMIT $8
+)
+SELECT id, title, author_names, year, pages, lang, description, rating_count, 1 - distance
+FROM nearest
+ORDER BY distance`
+
 var ErrEmptyQuery = errors.New("empty query")
 
 // QueryEmbedder turns a search query into a vector. *embed.Ollama implements it.
@@ -46,29 +69,6 @@ type Result struct {
 	RatingCount      int      `json:"rating_count"`
 	Similarity       float64  `json:"similarity"` // cosine similarity, 1 = same direction
 }
-
-// semanticSQL returns the $8 works nearest to the $1 vector computed by model $2. Filters are applied
-// while walking the HNSW index (pgvector iterative scans), so strict filters still return up to $8
-// results. relaxed_order may return rows slightly out of order, hence the outer sort.
-const semanticSQL = `
-WITH nearest AS MATERIALIZED (
-    SELECT w.id, w.title, w.author_names, coalesce(w.first_publish_year, 0) AS year,
-           coalesce(w.page_count, 0) AS pages, coalesce(w.original_language, '') AS lang,
-           w.description, w.rating_count, e.embedding <=> $1::halfvec AS distance
-    FROM work_embeddings e
-    JOIN works w ON w.id = e.work_id
-    WHERE e.model = $2
-      AND ($3 = 0 OR w.first_publish_year >= $3)
-      AND ($4 = 0 OR w.first_publish_year <= $4)
-      AND ($5 = 0 OR w.page_count >= $5)
-      AND ($6 = 0 OR w.page_count <= $6)
-      AND ($7 = '' OR w.original_language = $7)
-    ORDER BY e.embedding <=> $1::halfvec
-    LIMIT $8
-)
-SELECT id, title, author_names, year, pages, lang, description, rating_count, 1 - distance
-FROM nearest
-ORDER BY distance`
 
 // Semantic returns up to limit works whose vector is closest to the query's and that match f.
 func Semantic(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query string, f Filters, limit int) ([]Result, error) {

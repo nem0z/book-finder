@@ -15,6 +15,8 @@ import (
 
 const testDBEnv = "BOOKFINDER_TEST_DATABASE_URL"
 
+type fakeQuery struct{ model string }
+
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	url := os.Getenv(testDBEnv)
@@ -48,8 +50,6 @@ func axis(i int, w float32) []float32 {
 	v[i] = w
 	return v
 }
-
-type fakeQuery struct{ model string }
 
 func (f fakeQuery) Model() string { return f.model }
 
