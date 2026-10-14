@@ -18,8 +18,6 @@ const (
 	isbnCheckDigitX = 'X'
 
 	yearDigits = 4
-
-	workIDSuffix = 'W'
 )
 
 var (
@@ -160,7 +158,7 @@ func EditionWorkKey(data []byte) (string, bool) {
 		j++
 	}
 
-	if j == i+len(worksRefPrefix) || j >= len(data) || data[j] != workIDSuffix {
+	if j == i+len(worksRefPrefix) || j >= len(data) || data[j] != kinds[work].letter {
 		return "", false
 	}
 
