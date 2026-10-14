@@ -1,6 +1,9 @@
 package oldump
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // Paths that start a full Open Library key, e.g. "/works/OL45804W".
 const (
@@ -10,31 +13,52 @@ const (
 )
 
 const (
-	// Record kinds by the letter that ends an Open Library ID: OL45804W is a work.
-	workLetter    = 'W'
-	authorLetter  = 'A'
-	editionLetter = 'M'
-
 	idPrefix = "OL"
 
 	// Redirect chains longer than this are treated as loops.
 	maxRedirectHops = 10
 )
 
-// Redirects maps merged Open Library keys to the keys that replaced them. Keys are stored in full
-// form ("/works/OL45804W"). See docs/redirects.md.
-type Redirects map[string]string
+// kind is the type of record a key points to. The number in an ID is unique within a kind only:
+// OL123W and OL123A are different records.
+type kind uint8
+
+const (
+	work kind = iota
+	author
+	edition
+)
+
+// kinds gives each kind's path and the letter that ends its IDs (OL45804W is a work).
+var kinds = [...]struct {
+	path   string
+	letter byte
+}{
+	work:    {WorksPath, 'W'},
+	author:  {AuthorsPath, 'A'},
+	edition: {EditionsPath, 'M'},
+}
+
+// Redirects maps merged Open Library records to the records that replaced them, by ID number, with
+// one map per kind ("/works/OL45804W" is 45804 in the work map). See docs/redirects.md.
+type Redirects map[kind]map[uint32]uint32
 
 // Add registers a redirect. It returns false, and records nothing, when either key is invalid or the
 // two keys are of different kinds (a work redirected to an edition).
 func (r Redirects) Add(from, to string) bool {
-	from, okFrom := fixKey(from)
-	to, okTo := fixKey(to)
-	if !okFrom || !okTo || kind(from) != kind(to) {
+	fromKind, fromNum, _, okFrom := parseKey(from)
+	toKind, toNum, _, okTo := parseKey(to)
+	if !okFrom || !okTo || fromKind != toKind {
 		return false
 	}
 
-	r[from] = to
+	m := r[fromKind]
+	if m == nil {
+		m = map[uint32]uint32{}
+		r[fromKind] = m
+	}
+
+	m[fromNum] = toNum
 
 	return true
 }
@@ -42,96 +66,82 @@ func (r Redirects) Add(from, to string) bool {
 // Resolve returns the current full key for a key found in any record: it fixes the key, then
 // follows redirects. It returns "" when key is not a valid work, author or edition key.
 func (r Redirects) Resolve(key string) string {
-	key, ok := fixKey(key)
+	k, n, full, ok := parseKey(key)
 	if !ok {
 		return ""
 	}
 
+	m := r[k]
+	start := n
 	for range maxRedirectHops {
-		next, ok := r[key]
-		if !ok || next == key {
-			return key
+		next, ok := m[n]
+		if !ok || next == n {
+			break
 		}
 
-		key = next
+		n = next
 	}
 
-	return key
+	if n == start {
+		return full
+	}
+
+	return kinds[k].path + idPrefix + strconv.FormatUint(uint64(n), 10) + string(kinds[k].letter)
 }
 
-// fixKey returns key in full form, "/<path>/OL<digits><letter>", and whether it is a valid work,
-// author or edition key. Surrounding whitespace is trimmed and a missing path is added from the
-// ID's last letter ("OL4791619A" -> "/authors/OL4791619A").
-func fixKey(key string) (string, bool) {
+// parseKey returns key's kind, ID number and full form ("/<path>/OL<digits><letter>"), and whether
+// it is a valid work, author or edition key. Surrounding whitespace is trimmed and a missing path is
+// added from the ID's last letter ("OL4791619A" -> "/authors/OL4791619A"). A key whose path and
+// letter disagree ("/authors/OL1W") is invalid.
+func parseKey(key string) (k kind, n uint32, full string, ok bool) {
 	key = strings.TrimSpace(key)
-	if key != "" && key[0] != '/' {
-		path, ok := pathForLetter(key)
-		if !ok {
-			return "", false
+	if key == "" {
+		return 0, 0, "", false
+	}
+
+	k, ok = kindForLetter(key[len(key)-1])
+	if !ok {
+		return 0, 0, "", false
+	}
+
+	id := key
+	if key[0] == '/' {
+		if id, ok = strings.CutPrefix(key, kinds[k].path); !ok {
+			return 0, 0, "", false
 		}
-
-		key = path + key
+	} else {
+		key = kinds[k].path + key
 	}
 
-	path, id, ok := splitKey(key)
-	if !ok || !validID(id) {
-		return "", false
-	}
+	n, ok = idNumber(id)
 
-	if want, _ := pathForLetter(id); path != want {
-		return "", false
-	}
-
-	return key, true
+	return k, n, key, ok
 }
 
-// pathForLetter returns the path for an ID's last letter.
-func pathForLetter(id string) (string, bool) {
-	if id == "" {
-		return "", false
-	}
-
-	switch id[len(id)-1] {
-	case workLetter:
-		return WorksPath, true
-	case authorLetter:
-		return AuthorsPath, true
-	case editionLetter:
-		return EditionsPath, true
-	default:
-		return "", false
-	}
-}
-
-// splitKey splits "/works/OL1W" into "/works/" and "OL1W".
-func splitKey(key string) (path, id string, ok bool) {
-	for _, p := range []string{WorksPath, AuthorsPath, EditionsPath} {
-		if id, found := strings.CutPrefix(key, p); found {
-			return p, id, true
+func kindForLetter(c byte) (kind, bool) {
+	for k, info := range kinds {
+		if info.letter == c {
+			return kind(k), true
 		}
 	}
 
-	return "", "", false
+	return 0, false
 }
 
-// validID reports whether id is "OL", at least one digit, then a letter.
-func validID(id string) bool {
-	if len(id) < len(idPrefix)+2 || !strings.HasPrefix(id, idPrefix) {
-		return false
+// idNumber returns the number in "OL<digits><letter>". Leading zeros are rejected so that two
+// spellings cannot share a number; none appear in the dumps.
+func idNumber(id string) (uint32, bool) {
+	digits, ok := strings.CutPrefix(id, idPrefix)
+	if !ok || len(digits) < 2 {
+		return 0, false
 	}
 
-	for _, c := range id[len(idPrefix) : len(id)-1] {
-		if c < '0' || c > '9' {
-			return false
-		}
+	digits = digits[:len(digits)-1]
+	if digits[0] == '0' || digits[0] == '+' {
+		return 0, false
 	}
 
-	_, ok := pathForLetter(id)
+	n, err := strconv.ParseUint(digits, 10, 32)
 
-	return ok
-}
-
-// kind returns the path of a full key, e.g. "/works/".
-func kind(key string) string {
-	return key[:strings.LastIndexByte(key, '/')+1]
+	return uint32(n), err == nil
 }

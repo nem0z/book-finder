@@ -6,21 +6,23 @@ func TestRedirectsAdd(t *testing.T) {
 	cases := []struct {
 		from, to string
 		ok       bool
-		key      string // stored key, when ok
-		want     string // stored target, when ok
+		want     string // Resolve(from), when ok
 	}{
-		{"/works/OL2W", "/works/OL1W", true, "/works/OL2W", "/works/OL1W"},
-		{"/authors/OL9A", "OL1A", true, "/authors/OL9A", "/authors/OL1A"}, // target without its path
-		{"/authors/OL8A", "\t/authors/OL3A", true, "/authors/OL8A", "/authors/OL3A"},
-		{"/books/OL2M", "/books/OL1M", true, "/books/OL2M", "/books/OL1M"},
-		{"/works/OL3W", "/books/OL1M", false, "", ""},     // different kinds
-		{"/authors/OL2W", "/authors/OL1A", false, "", ""}, // letter does not match the path
-		{"/authors/OL123", "/authors/OL1A", false, "", ""},
-		{"/books/ia:cihm_1", "/books/OL3M", false, "", ""},
-		{"/about/team", "/about/people", false, "", ""},
-		{"/books/OL4M", "Diplomatarium Islandicum, Bd. 1", false, "", ""},
-		{"/works/OL4W", "", false, "", ""},
-		{"/works/OLxW", "/works/OL1W", false, "", ""},
+		{"/works/OL2W", "/works/OL1W", true, "/works/OL1W"},
+		{"/authors/OL9A", "OL1A", true, "/authors/OL1A"}, // target without its path
+		{"/authors/OL8A", "\t/authors/OL3A", true, "/authors/OL3A"},
+		{"/books/OL2M", "/books/OL1M", true, "/books/OL1M"},
+		{"/works/OL3W", "/books/OL1M", false, ""},     // different kinds
+		{"/authors/OL2W", "/authors/OL1A", false, ""}, // letter does not match the path
+		{"/authors/OL123", "/authors/OL1A", false, ""},
+		{"/books/ia:cihm_1", "/books/OL3M", false, ""},
+		{"/about/team", "/about/people", false, ""},
+		{"/books/OL4M", "Diplomatarium Islandicum, Bd. 1", false, ""},
+		{"/works/OL4W", "", false, ""},
+		{"/works/OLxW", "/works/OL1W", false, ""},
+		{"/works/OL05W", "/works/OL1W", false, ""},         // leading zero
+		{"/works/OL+5W", "/works/OL1W", false, ""},         // sign
+		{"/works/OL4294967296W", "/works/OL1W", false, ""}, // does not fit in 32 bits
 	}
 
 	for _, c := range cases {
@@ -34,8 +36,10 @@ func TestRedirectsAdd(t *testing.T) {
 			t.Errorf("%q -> %q: rejected but stored %v", c.from, c.to, r)
 		}
 
-		if c.ok && (len(r) != 1 || r[c.key] != c.want) {
-			t.Errorf("%q -> %q: stored %v", c.from, c.to, r)
+		if c.ok {
+			if got := r.Resolve(c.from); got != c.want {
+				t.Errorf("%q -> %q: resolves to %q", c.from, c.to, got)
+			}
 		}
 	}
 }
@@ -56,9 +60,10 @@ func TestRedirectsResolve(t *testing.T) {
 		" /works/OL3W ": "/works/OL3W",
 		"/works/OL7W":   "/works/OL7W", // not redirected
 		"OL9A":          "/authors/OL1A",
-		"/books/OL1M":   "/books/OL1M",
+		"/authors/OL1A": "/authors/OL1A",
+		"/authors/OL1W": "",            // OL1W is redirected as a work, not as an author
+		"/books/OL9M":   "/books/OL9M", // same number as a redirected author, different kind
 		"/about/team":   "",
-		"/authors/OL9W": "",
 		"":              "",
 	} {
 		if got := r.Resolve(in); got != want {

@@ -16,8 +16,9 @@ redirects, so data attached to an old ID still reaches the surviving record.
 | `A` | author | `/authors/` |
 | `M` | edition | `/books/` |
 
-The number is unique within a type only (`OL123W` and `OL123A` are different records), so the full
-ID is used as the map key.
+The number is unique within a type only (`OL123W` and `OL123A` are different records), so redirects are
+stored by number in one map per type. In the dump the numbers have no leading zeros and the largest is
+58.9M, so a 32-bit number holds them without losing anything.
 
 ## What the redirects dump contains
 
@@ -40,7 +41,8 @@ source's type. The full form (with the path) is the correct one.
 
 ## The `oldump.Redirects` type
 
-A map from old key to new key, with two methods:
+One map per type (work, author, edition), from old ID number to new ID number
+(`/works/OL45804W` is 45804 in the work map), with two methods:
 
 - **`Add(from, to)`** fixes both keys and stores the redirect. It returns false, and stores nothing, when
   either key is invalid or the two keys are of different kinds (work → edition).
@@ -66,15 +68,16 @@ Result on the 2026-09-30 dump: 1,818,431 redirects kept (4,576 targets needed th
 | Target is not an ID | 1 | `/books/OL7246278M` → `Diplomatarium Islandicum, Bd. 1` |
 
 One author redirect has a stray tab before its target (`"\t/authors/OL3281458A"`); trimming recovers it.
-Edition redirects (115,912) are kept too: nothing follows them yet, but filtering them out would add a rule
-for about 35 MB.
+Edition redirects (115,912) are kept too: nothing follows them yet, and they cost about 2 MB.
 
 ## Storage: in memory, rebuilt at each load
 
 | | |
 |---|---|
-| Read + decompress + build the map | ~6 s |
-| Memory (map of full keys) | ~190 MB |
+| Read + decompress the dump | ~5 s |
+| Build the map | ~0.4 s |
+| Memory | ~29 MB |
+| `Resolve`, key not redirected / redirected | ~156 ns / ~361 ns |
 
 The map is rebuilt from the redirects dump at the start of every load and is not stored in Postgres:
 
@@ -82,9 +85,8 @@ The map is rebuilt from the redirects dump at the start of every load and is not
 - each monthly dump adds new merges, so a stored table would need refreshing anyway;
 - only the loader needs it; nothing else translates old IDs today.
 
-**Considered and rejected:** keying the map by the numeric part of the ID (`OL45804W` → `45804`, one
-map per type). It would use far less memory, but a lookup was slower in a benchmark (~180 ns vs ~83 ns,
-because the number must be parsed first), and ~190 MB is acceptable.
+**Numbers rather than full keys:** a map keyed by the full text key used ~190 MB. With the same key
+fixing, it was also slightly slower: ~175 ns and ~400 ns for the two cases above.
 
 ## Checked: edition work references
 
