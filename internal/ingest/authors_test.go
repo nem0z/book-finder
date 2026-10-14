@@ -37,9 +37,11 @@ func TestNeededAuthor(t *testing.T) {
 	l := newLoader(nil, Options{})
 	l.authorsNeeded = map[string]struct{}{"OL1A": {}}
 	for line, want := range map[string]bool{
-		"/type/author\t/authors/OL1A\t1\t2026\t{}": true,
-		"/type/author\t/authors/OL2A\t1\t2026\t{}": false,
-		"/type/author\t/authors/OL1A":              false, // no tab after the key
+		"/type/author\t/authors/OL1A\t1\t2026\t{}":   true,
+		"/type/author\t/authors/OL2A\t1\t2026\t{}":   false,
+		"/type/author\t/authors/OL1A":                false, // no tab after the key
+		"/type/redirect\t/authors/OL1A\t1\t2026\t{}": true,  // the filter checks the type separately
+		"no tabs": false,
 	} {
 		if got := l.neededAuthor([]byte(line)); got != want {
 			t.Errorf("%q: got %v", line, got)
