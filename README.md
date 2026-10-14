@@ -8,7 +8,7 @@ Status: proof of concept, in progress. See [docs/schema.md](docs/schema.md) for 
 ## Requirements
 
 - Go 1.27+
-- Postgres 17 with [pgvector](https://github.com/pgvector/pgvector) 0.8+ (the provided `docker-compose.yml` runs one)
+- Postgres 17 with [pgvector](https://github.com/pgvector/pgvector) 0.8+ and [Ollama](https://ollama.com) (the provided `docker-compose.yml` runs both)
 
 ## Start Postgres
 
@@ -18,6 +18,15 @@ docker compose up -d
 
 This starts Postgres 17 with pgvector on `localhost:5432` (user, password and database: `bookfinder`), with
 settings tuned for bulk loading. Data is kept in the `pgdata` volume; `docker compose down -v` deletes it.
+
+## Start the embedding model
+
+Semantic search uses [EmbeddingGemma](https://ai.google.dev/gemma/docs/embeddinggemma), served by Ollama. The
+same `docker compose up -d` starts Ollama on `localhost:11434`; download the model once (~620 MB):
+
+```sh
+docker compose exec ollama ollama pull embeddinggemma
+```
 
 ## Create the schema
 
