@@ -26,9 +26,9 @@ English and 67% when it is in another language (about 1% of works).
 Keys are Open Library IDs without the path prefix (`OL45804W`, `OL23919A`), so any row maps back to
 `https://openlibrary.org/works/<id>`.
 
-Editions are not stored. When a work has several English editions, the most complete one fills in what the work
-lacks: it prefers an edition with a description, then one with a page count, an ISBN-13 and a cover; ties go to the
-most recent edition.
+Editions are not stored. When a work has no description, it takes the longest description among its English editions.
+For page count, ISBN-13 and cover, the most complete English edition fills in what the work lacks: it prefers an edition
+with a page count, then an ISBN-13, then a cover; ties go to the most recent edition.
 
 ## Indexes
 

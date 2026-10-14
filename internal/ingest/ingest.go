@@ -26,6 +26,10 @@ CREATE UNLOGGED TABLE stage_works (
     subjects text[], subject_places text[], subject_people text[], subject_times text[],
     cover_id bigint, author_ids text[]
 );
+CREATE UNLOGGED TABLE stage_work_stats (
+    id text, edition_description text, earliest_year smallint, original_language text,
+    page_count smallint, isbn_13 text, genres text[], cover_id bigint
+);
 `
 )
 
@@ -108,6 +112,7 @@ func Run(ctx context.Context, pool *pgxpool.Pool, opts Options) (Stats, error) {
 		{"works", l.loadWorks},
 		{"editions", l.loadEditions},
 		{"authors", l.loadAuthors},
+		{"finalize", l.finalize},
 	}
 
 	for _, s := range steps {

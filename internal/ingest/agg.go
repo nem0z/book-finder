@@ -7,12 +7,10 @@ const (
 	minPages  = 10
 	maxPages  = 5000
 
-	// Completeness weights: an edition with a description beats any edition without one,
-	// then page count, ISBN-13 and cover break ties in that order.
-	descriptionWeight = 8
-	pagesWeight       = 4
-	isbnWeight        = 2
-	coverWeight       = 1
+	// Completeness weights of an English edition: page count, then ISBN-13, then cover.
+	pagesWeight = 4
+	isbnWeight  = 2
+	coverWeight = 1
 )
 
 // notALanguage holds MARC codes that name no single language: undetermined, multiple, no linguistic
@@ -26,6 +24,7 @@ type workAgg struct {
 
 	english        int32
 	best           bestEdition
+	description    string // longest English edition description, kept only when the work has none
 	genres         []string
 	earliestYear   int16
 	earliestLangYr int16
@@ -52,15 +51,15 @@ type editionFacts struct {
 	coverID        int64
 }
 
-// bestEdition is the most complete English edition seen so far; it fills in what the work lacks.
+// bestEdition is the most complete English edition seen so far; it fills in the page count, ISBN-13
+// and cover a work lacks. The description is chosen separately (workAgg.description).
 type bestEdition struct {
-	found       bool
-	score       int
-	year        int16
-	pages       int16
-	isbn13      string
-	description string // kept only when the work has no description of its own
-	coverID     int64
+	found   bool
+	score   int
+	year    int16
+	pages   int16
+	isbn13  string
+	coverID int64
 }
 
 // validPages returns the page count, or 0 when it is missing or implausible.
@@ -72,13 +71,9 @@ func (e editionFacts) validPages() int {
 	return e.pages
 }
 
-// completeness ranks an English edition: description first, then page count, ISBN-13 and cover.
+// completeness ranks an English edition: page count, then ISBN-13, then cover.
 func (e editionFacts) completeness() int {
 	score := 0
-	if e.description != "" {
-		score += descriptionWeight
-	}
-
 	if e.validPages() > 0 {
 		score += pagesWeight
 	}
@@ -107,6 +102,14 @@ func (a *workAgg) addEdition(e editionFacts) {
 	}
 
 	a.considerBest(e)
+	a.considerDescription(e.description)
+}
+
+// considerDescription keeps the longest English edition description, when the work has none.
+func (a *workAgg) considerDescription(d string) {
+	if !a.hasDescription && len(d) > len(a.description) {
+		a.description = d
+	}
 }
 
 // trackEarliest records the earliest edition year and the language of the earliest dated edition.
@@ -151,19 +154,13 @@ func (a *workAgg) considerBest(e editionFacts) {
 		return
 	}
 
-	description := ""
-	if !a.hasDescription {
-		description = e.description
-	}
-
 	a.best = bestEdition{
-		found:       true,
-		score:       score,
-		year:        year,
-		pages:       int16(e.validPages()),
-		isbn13:      e.isbn13,
-		description: description,
-		coverID:     e.coverID,
+		found:   true,
+		score:   score,
+		year:    year,
+		pages:   int16(e.validPages()),
+		isbn13:  e.isbn13,
+		coverID: e.coverID,
 	}
 }
 

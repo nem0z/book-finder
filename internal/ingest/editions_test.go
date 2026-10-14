@@ -25,9 +25,10 @@ func TestLoadEditions(t *testing.T) {
 		t.Errorf("OL1W: english %d, earliest %d, language %q", w.english, w.earliestYear, w.originalLanguage())
 	}
 
-	// OL2M has a description, so it beats OL1M; the work has its own description, so OL2M's is not kept.
-	if b := w.best; b.pages != 512 || b.year != 2019 || b.description != "" || b.isbn13 != "" {
-		t.Errorf("OL1W best edition: %+v", b)
+	// OL1M (pages, ISBN-13, cover) beats OL2M (pages only). The work has its own description, so
+	// OL2M's is not kept.
+	if b := w.best; b.pages != 480 || b.year != 2018 || b.isbn13 != "9780000000001" || b.coverID != 7 || w.description != "" {
+		t.Errorf("OL1W best edition: %+v, description %q", b, w.description)
 	}
 
 	// Editions arrive in no fixed order, so the order and the first spelling seen ("Fiction." or
@@ -47,8 +48,9 @@ func TestLoadEditions(t *testing.T) {
 
 	w = l.works["OL4W"]
 	if w.english != 1 || w.earliestYear != 1950 || w.originalLanguage() != "fre" ||
-		w.best.description != "A French novel, translated." || w.best.year != 1990 {
-		t.Errorf("OL4W: english %d, earliest %d, language %q, best %+v", w.english, w.earliestYear, w.originalLanguage(), w.best)
+		w.description != "A French novel, translated." || w.best.year != 1990 {
+		t.Errorf("OL4W: english %d, earliest %d, language %q, description %q, best %+v", w.english, w.earliestYear,
+			w.originalLanguage(), w.description, w.best)
 	}
 
 	if w := l.works["OL6W"]; w.english != 1 || w.best.pages != 0 {
