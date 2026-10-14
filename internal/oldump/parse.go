@@ -18,12 +18,10 @@ const (
 	isbnCheckDigitX = 'X'
 
 	yearDigits = 4
-
-	workIDSuffix = 'W'
 )
 
 var (
-	worksRefPrefix = []byte(`"/works/OL`)
+	worksRefPrefix = []byte(`"` + WorksPath + idPrefix)
 
 	// Subjects that contain the fiction word but describe non-fiction: "Juvenile nonfiction" (about 42k works
 	// with an English edition and a description in the 2026-09-30 dump), and books about fiction such as
@@ -160,7 +158,7 @@ func EditionWorkKey(data []byte) (string, bool) {
 		j++
 	}
 
-	if j == i+len(worksRefPrefix) || j >= len(data) || data[j] != workIDSuffix {
+	if j == i+len(worksRefPrefix) || j >= len(data) || data[j] != kinds[work].letter {
 		return "", false
 	}
 
