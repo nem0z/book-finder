@@ -17,6 +17,22 @@ import (
 // the catalogue.
 const testDBEnv = "BOOKFINDER_TEST_DATABASE_URL"
 
+// fakeEmbedder returns a unit vector and records what it embedded.
+type fakeEmbedder struct{ titles []string }
+
+func (f *fakeEmbedder) Model() string { return "fake" }
+
+func (f *fakeEmbedder) EmbedDocuments(_ context.Context, docs []Doc) ([][]float32, error) {
+	vecs := make([][]float32, len(docs))
+	for i, d := range docs {
+		f.titles = append(f.titles, d.Title)
+		vecs[i] = make([]float32, Dims)
+		vecs[i][0] = 1
+	}
+
+	return vecs, nil
+}
+
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	url := os.Getenv(testDBEnv)
@@ -40,22 +56,6 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	}
 
 	return pool
-}
-
-// fakeEmbedder returns a unit vector and records what it embedded.
-type fakeEmbedder struct{ titles []string }
-
-func (f *fakeEmbedder) Model() string { return "fake" }
-
-func (f *fakeEmbedder) EmbedDocuments(_ context.Context, docs []Doc) ([][]float32, error) {
-	vecs := make([][]float32, len(docs))
-	for i, d := range docs {
-		f.titles = append(f.titles, d.Title)
-		vecs[i] = make([]float32, Dims)
-		vecs[i][0] = 1
-	}
-
-	return vecs, nil
 }
 
 func TestRun(t *testing.T) {

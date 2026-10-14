@@ -21,6 +21,30 @@ const (
 	DefaultMinDescription = 300
 )
 
+// eligibleSQL selects works worth a vector, most-rated first: a description of at least $1 bytes
+// without links or HTML (those are usually series lists or markup, not a summary). Pages are read
+// after the ($2, $3) position in that order.
+const eligibleSQL = `
+SELECT w.id, w.title, coalesce(w.subtitle, ''), w.author_names, w.genres, w.subjects, w.description,
+       w.rating_count, coalesce(e.content_hash, '')
+FROM works w
+LEFT JOIN work_embeddings e ON e.work_id = w.id
+WHERE length(w.description) >= $1
+  AND w.description !~ '(https?://|\[[0-9]+\]:|<[a-zA-Z]+[ >/])'
+  AND (-w.rating_count, w.id) > ($2, $3)
+ORDER BY -w.rating_count, w.id
+LIMIT $4`
+
+const upsertSQL = `
+INSERT INTO work_embeddings (work_id, model, content_hash, embedding)
+SELECT t.id, $2, t.hash, t.vec::halfvec
+FROM unnest($1::text[], $3::text[], $4::text[]) AS t(id, hash, vec)
+ON CONFLICT (work_id) DO UPDATE
+SET model = EXCLUDED.model, content_hash = EXCLUDED.content_hash, embedding = EXCLUDED.embedding,
+    created_at = now()`
+
+const pruneSQL = `DELETE FROM work_embeddings e WHERE NOT EXISTS (SELECT 1 FROM works w WHERE w.id = e.work_id)`
+
 var ErrEmptyCatalogue = errors.New("no works in the catalogue; load it first")
 
 // Embedder turns texts into vectors of Dims floats. *Ollama implements it; tests use a fake.
@@ -45,30 +69,6 @@ type Stats struct {
 	UpToDate   int64 `json:"up_to_date"` // already embedded from the same model and text
 	Pruned     int64 `json:"pruned"`     // vectors deleted because their work is gone
 }
-
-// eligibleSQL selects works worth a vector, most-rated first: a description of at least $1 bytes
-// without links or HTML (those are usually series lists or markup, not a summary). Pages are read
-// after the ($2, $3) position in that order.
-const eligibleSQL = `
-SELECT w.id, w.title, coalesce(w.subtitle, ''), w.author_names, w.genres, w.subjects, w.description,
-       w.rating_count, coalesce(e.content_hash, '')
-FROM works w
-LEFT JOIN work_embeddings e ON e.work_id = w.id
-WHERE length(w.description) >= $1
-  AND w.description !~ '(https?://|\[[0-9]+\]:|<[a-zA-Z]+[ >/])'
-  AND (-w.rating_count, w.id) > ($2, $3)
-ORDER BY -w.rating_count, w.id
-LIMIT $4`
-
-const upsertSQL = `
-INSERT INTO work_embeddings (work_id, model, content_hash, embedding)
-SELECT t.id, $2, t.hash, t.vec::halfvec
-FROM unnest($1::text[], $3::text[], $4::text[]) AS t(id, hash, vec)
-ON CONFLICT (work_id) DO UPDATE
-SET model = EXCLUDED.model, content_hash = EXCLUDED.content_hash, embedding = EXCLUDED.embedding,
-    created_at = now()`
-
-const pruneSQL = `DELETE FROM work_embeddings e WHERE NOT EXISTS (SELECT 1 FROM works w WHERE w.id = e.work_id)`
 
 type job struct {
 	id, hash string
