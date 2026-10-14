@@ -28,6 +28,23 @@ go run ./cmd/migrate
 Migrations live in `internal/db/migrations` and are applied in file-name order, once each. Set `DATABASE_URL`
 to use another database (default `postgres://bookfinder:bookfinder@localhost:5432/bookfinder?sslmode=disable`).
 
+## Load the catalogue
+
+Download the works, editions, authors and redirects dumps from
+[openlibrary.org/developers/dumps](https://openlibrary.org/developers/dumps) (about 17 GB in total; `data/` is
+git-ignored), then:
+
+```sh
+go run ./cmd/ingest \
+  -works data/ol_dump_works_2026-09-30.txt.gz \
+  -editions data/ol_dump_editions_2026-09-30.txt.gz \
+  -authors data/ol_dump_authors_2026-09-30.txt.gz \
+  -redirects data/ol_dump_redirects_2026-09-30.txt.gz
+```
+
+It applies the migrations, then rebuilds the catalogue from scratch: the existing `works`, `authors` and
+`work_authors` rows are replaced. See [docs/schema.md](docs/schema.md) for what is kept.
+
 ## Development
 
 ```sh
