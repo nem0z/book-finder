@@ -28,5 +28,16 @@ services:
       timeout: 5s
       retries: 20
 
+  ollama:
+    # Serves the EmbeddingGemma model used for semantic search. Pull it once with
+    # `docker compose exec ollama ollama pull embeddinggemma`; the model is kept in the ollama volume.
+    # Runs on CPU; to use an NVIDIA GPU, add a `deploy.resources.reservations.devices` entry.
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
 volumes:
   pgdata:
+  ollama:
