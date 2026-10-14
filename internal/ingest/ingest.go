@@ -48,9 +48,11 @@ type Options struct {
 }
 
 type Stats struct {
-	Redirects      redirectStats `json:"redirects"`
-	CandidateWorks int           `json:"candidate_works"`
-	DecodeErrors   int64         `json:"decode_errors"`
+	Redirects               redirectStats `json:"redirects"`
+	CandidateWorks          int           `json:"candidate_works"`
+	Editions                int64         `json:"editions"` // editions of candidate works
+	WorksWithEnglishEdition int           `json:"works_with_english_edition"`
+	DecodeErrors            int64         `json:"decode_errors"`
 }
 
 type loader struct {
@@ -106,6 +108,7 @@ func Run(ctx context.Context, pool *pgxpool.Pool, opts Options) (Stats, error) {
 		{"prepare", l.prepare},
 		{"redirects", l.loadRedirects},
 		{"works", l.loadWorks},
+		{"editions", l.loadEditions},
 	}
 
 	for _, s := range steps {
