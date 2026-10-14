@@ -37,8 +37,8 @@ func TestLoadWorks(t *testing.T) {
 		t.Errorf("authors needed (OL9A redirects to OL1A): %v", got)
 	}
 
-	if l.stats.CandidateWorks != 4 || l.decodeErrors.Load() != 1 {
-		t.Errorf("stats: %+v, decode errors %d", l.stats, l.decodeErrors.Load())
+	if l.stats.CandidateWorks != 4 || l.stats.DecodeErrors != 1 {
+		t.Errorf("stats: %+v", l.stats)
 	}
 
 	var title, desc string

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/nem0z/book-finder/internal/oldump"
@@ -32,25 +33,33 @@ func cleanList(in []string, limit int) []string {
 	return out
 }
 
+var (
+	errNoTitle    = fmt.Errorf("%w: work has no title", oldump.ErrSkip)
+	errNotFiction = fmt.Errorf("%w: work is not fiction", oldump.ErrSkip)
+)
+
 // decodeWork runs on decode workers. It keeps fiction works with a title.
-func (l *loader) decodeWork(line []byte) (workRow, bool) {
-	_, key, data, ok := oldump.SplitRecord(line)
-	if !ok {
-		return workRow{}, false
+func (l *loader) decodeWork(line []byte) (workRow, error) {
+	_, key, data, err := splitRecord(line)
+	if err != nil {
+		return workRow{}, err
 	}
 
 	var w oldump.Work
 	if err := json.Unmarshal(data, &w); err != nil {
-		l.decodeErrors.Add(1)
-		return workRow{}, false
+		return workRow{}, fmt.Errorf("work %s: %w", key, err)
 	}
 
 	title := oldump.Clean(w.Title)
-	if title == "" || !oldump.IsFiction(w.Subjects) {
-		return workRow{}, false
+	if title == "" {
+		return workRow{}, errNoTitle
 	}
 
-	return l.newWorkRow(oldump.ShortKey(string(key)), title, &w), true
+	if !oldump.IsFiction(w.Subjects) {
+		return workRow{}, errNotFiction
+	}
+
+	return l.newWorkRow(oldump.ShortKey(string(key)), title, &w), nil
 }
 
 // newWorkRow builds the staged row for a fiction work.
@@ -113,6 +122,7 @@ func (l *loader) loadWorks(ctx context.Context) error {
 		return []any{r.id, r.title, nullStr(r.subtitle), nullStr(r.description), nullInt(r.year),
 			r.subjects, r.places, r.people, r.times, nullInt64(r.coverID), r.authorID}
 	})
+	l.countFailures("works", s.Failed(), s.FirstFailure())
 	l.stats.CandidateWorks = len(l.works)
 	l.log.Info("fiction candidates", "works", len(l.works), "authors referenced", len(l.authorsNeeded))
 	return err

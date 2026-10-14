@@ -44,16 +44,23 @@ type StreamOptions struct {
 	OnProgress       func(Progress)
 }
 
+// ErrSkip marks a record the decoder does not want (not fiction, not a candidate...). Decoders wrap
+// it to give the reason; Stream counts such lines as skipped rather than failed.
+var ErrSkip = errors.New("record skipped")
+
 // Stream reads path, keeps lines accepted by filter (run on the reader goroutine, so it must be
 // cheap and only read shared state), decodes them on Workers goroutines and delivers results on
-// C in no particular order. Lines for which decode returns ok=false are skipped and counted.
+// C in no particular order. Lines for which decode returns an error are dropped and counted: as
+// skipped when the error wraps ErrSkip, as failed otherwise.
 type Stream[T any] struct {
 	C <-chan T
 
-	cancel  context.CancelFunc
-	done    chan struct{}
-	err     error // written by the reader goroutine, read after done is closed
-	skipped atomic.Int64
+	cancel       context.CancelFunc
+	done         chan struct{}
+	err          error // written by the reader goroutine, read after done is closed
+	skipped      atomic.Int64
+	failed       atomic.Int64
+	firstFailure atomic.Pointer[error]
 }
 
 // countingReader counts the bytes read from the underlying file, for progress reporting.
@@ -232,7 +239,7 @@ func (pr *progressReporter) maybeReport() {
 	}
 }
 
-func NewStream[T any](ctx context.Context, path string, opts StreamOptions, filter func(line []byte) bool, decode func(line []byte) (T, bool)) *Stream[T] {
+func NewStream[T any](ctx context.Context, path string, opts StreamOptions, filter func(line []byte) bool, decode func(line []byte) (T, error)) *Stream[T] {
 	ctx, cancel := context.WithCancel(ctx)
 	workers := max(opts.Workers, 1)
 	lines := make(chan []byte, queuePerWorker*workers)
@@ -273,13 +280,13 @@ func (s *Stream[T]) read(ctx context.Context, path string, opts StreamOptions, f
 }
 
 // decodeLines is one worker: it decodes lines and sends the results until lines is closed.
-func (s *Stream[T]) decodeLines(ctx context.Context, wg *sync.WaitGroup, lines <-chan []byte, out chan<- T, decode func([]byte) (T, bool)) {
+func (s *Stream[T]) decodeLines(ctx context.Context, wg *sync.WaitGroup, lines <-chan []byte, out chan<- T, decode func([]byte) (T, error)) {
 	defer wg.Done()
 
 	for line := range lines {
-		v, ok := decode(line)
-		if !ok {
-			s.skipped.Add(1)
+		v, err := decode(line)
+		if err != nil {
+			s.drop(err)
 			continue
 		}
 
@@ -317,5 +324,28 @@ func (s *Stream[T]) Stop() {
 	<-s.done
 }
 
-// Skipped is the number of lines that passed the filter but were rejected by decode.
+// drop counts a line whose decoding returned err.
+func (s *Stream[T]) drop(err error) {
+	if errors.Is(err, ErrSkip) {
+		s.skipped.Add(1)
+		return
+	}
+
+	s.failed.Add(1)
+	s.firstFailure.CompareAndSwap(nil, &err)
+}
+
+// Skipped is the number of lines that passed the filter but that decode did not want (ErrSkip).
 func (s *Stream[T]) Skipped() int64 { return s.skipped.Load() }
+
+// Failed is the number of lines that decode could not read (malformed line or JSON).
+func (s *Stream[T]) Failed() int64 { return s.failed.Load() }
+
+// FirstFailure returns the first error counted by Failed, or nil.
+func (s *Stream[T]) FirstFailure() error {
+	if p := s.firstFailure.Load(); p != nil {
+		return *p
+	}
+
+	return nil
+}

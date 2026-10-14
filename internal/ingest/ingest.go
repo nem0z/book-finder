@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -48,11 +47,10 @@ type Options struct {
 }
 
 type Stats struct {
-	Redirects               redirectStats `json:"redirects"`
-	CandidateWorks          int           `json:"candidate_works"`
-	Editions                int64         `json:"editions"` // editions of candidate works
-	WorksWithEnglishEdition int           `json:"works_with_english_edition"`
-	DecodeErrors            int64         `json:"decode_errors"`
+	Redirects      redirectStats `json:"redirects"`
+	CandidateWorks int           `json:"candidate_works"`
+	Editions       int64         `json:"editions"`      // editions of candidate works
+	DecodeErrors   int64         `json:"decode_errors"` // lines that could not be read, all passes
 }
 
 type loader struct {
@@ -65,8 +63,7 @@ type loader struct {
 	works         map[string]*workAgg // short work ID -> aggregate
 	authorsNeeded map[string]struct{} // short author IDs referenced by candidate works
 
-	decodeErrors atomic.Int64
-	stats        Stats
+	stats Stats
 }
 
 func newLoader(pool *pgxpool.Pool, opts Options) *loader {
@@ -121,8 +118,6 @@ func Run(ctx context.Context, pool *pgxpool.Pool, opts Options) (Stats, error) {
 		l.log.Info("step done", "step", s.name, "took", time.Since(t).Round(time.Millisecond))
 	}
 
-	l.stats.DecodeErrors = l.decodeErrors.Load()
-
 	return l.stats, nil
 }
 
@@ -157,4 +152,24 @@ func (l *loader) prepare(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// countFailures adds a pass's unreadable lines to the stats and logs the first one.
+func (l *loader) countFailures(step string, failed int64, first error) {
+	if failed == 0 {
+		return
+	}
+
+	l.stats.DecodeErrors += failed
+	l.log.Warn("lines could not be read", "step", step, "count", failed, "first", first)
+}
+
+// splitRecord is oldump.SplitRecord with an error for malformed lines.
+func splitRecord(line []byte) (typ, key, data []byte, err error) {
+	typ, key, data, ok := oldump.SplitRecord(line)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("malformed line: %.80q", line)
+	}
+
+	return typ, key, data, nil
 }

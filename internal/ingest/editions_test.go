@@ -1,8 +1,11 @@
 package ingest
 
 import (
+	"errors"
 	"slices"
 	"testing"
+
+	"github.com/nem0z/book-finder/internal/oldump"
 )
 
 func TestLoadEditions(t *testing.T) {
@@ -12,8 +15,8 @@ func TestLoadEditions(t *testing.T) {
 	l.works = map[string]*workAgg{"OL1W": {hasDescription: true}, "OL2W": {}, "OL4W": {}, "OL6W": {}}
 	loadThrough(t, l, l.loadRedirects, l.loadEditions)
 
-	if l.stats.Editions != 6 || l.stats.WorksWithEnglishEdition != 3 || l.decodeErrors.Load() != 0 {
-		t.Errorf("stats: %+v, decode errors %d", l.stats, l.decodeErrors.Load())
+	if l.stats.Editions != 6 || l.stats.DecodeErrors != 0 {
+		t.Errorf("stats: %+v", l.stats)
 	}
 
 	w := l.works["OL1W"]
@@ -52,5 +55,29 @@ func TestFirstISBN13(t *testing.T) {
 
 	if got := firstISBN13(nil); got != "" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestCandidateWork(t *testing.T) {
+	l := newLoader(nil, Options{})
+	l.works = map[string]*workAgg{"OL1W": {}}
+	if err := l.redirects.Add("/works/OL9W", "/works/OL1W"); err != nil {
+		t.Fatal(err)
+	}
+
+	for raw, want := range map[string]error{
+		`{"works": [{"key": "/works/OL9W"}]}`:          nil, // redirected to a candidate
+		`{"works": [{"key": "/works/OL2W"}]}`:          errNotCandidate,
+		`{"works": [{"key": "/works/OL4294967296W"}]}`: errNotCandidate, // invalid key
+		`{"key": "/books/OL1M"}`:                       errNoWorkKey,
+	} {
+		id, err := l.candidateWork([]byte(raw))
+		if !errors.Is(err, want) || (want == nil) != (id == "OL1W") {
+			t.Errorf("%s: got %q, %v, want %v", raw, id, err, want)
+		}
+
+		if err != nil && !errors.Is(err, oldump.ErrSkip) {
+			t.Errorf("%s: %v should be a skip", raw, err)
+		}
 	}
 }

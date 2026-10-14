@@ -19,7 +19,7 @@ func TestCopyStream(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "numbers.txt.gz", "1\n2\n3\nx\n4\n", true)
 	s := oldump.NewStream(ctx, path, oldump.StreamOptions{Workers: 2},
 		func([]byte) bool { return true },
-		func(line []byte) (int, bool) { n, err := strconv.Atoi(string(line)); return n, err == nil })
+		func(line []byte) (int, error) { return strconv.Atoi(string(line)) })
 	n, err := copyStream(ctx, pool, "copy_stream_test", []string{"n"}, s, func(v int) []any {
 		if v == 2 {
 			return nil
@@ -36,8 +36,8 @@ func TestCopyStream(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if n != 3 || sum != 8 || s.Skipped() != 1 {
-		t.Errorf("copied %d rows, sum %d, skipped %d", n, sum, s.Skipped())
+	if n != 3 || sum != 8 || s.Failed() != 1 {
+		t.Errorf("copied %d rows, sum %d, failed %d", n, sum, s.Failed())
 	}
 }
 
@@ -46,7 +46,7 @@ func TestCopyStreamBadTable(t *testing.T) {
 	ctx := context.Background()
 	path := writeFile(t, t.TempDir(), "numbers.txt", "1\n2\n", false)
 	s := oldump.NewStream(ctx, path, oldump.StreamOptions{}, func([]byte) bool { return true },
-		func(line []byte) (string, bool) { return string(line), true })
+		func(line []byte) (string, error) { return string(line), nil })
 	if _, err := copyStream(ctx, pool, "no_such_table", []string{"n"}, s, func(v string) []any { return []any{v} }); err == nil {
 		t.Error("expected an error") // and the stream must be stopped without hanging
 	}

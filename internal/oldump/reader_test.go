@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -66,7 +68,16 @@ func TestStream(t *testing.T) {
 	}
 
 	filter := func(line []byte) bool { return !bytes.Contains(line, []byte("OL1W")) }
-	decode := func(line []byte) (int, bool) { return len(line), !bytes.Contains(line, []byte("OL11W")) }
+	decode := func(line []byte) (int, error) {
+		switch {
+		case bytes.Contains(line, []byte("OL11W")):
+			return 0, fmt.Errorf("%w: not wanted", ErrSkip)
+		case bytes.Contains(line, []byte("OL111W")):
+			return 0, errors.New("malformed")
+		}
+
+		return len(line), nil
+	}
 	s := NewStream(context.Background(), path, StreamOptions{Workers: 4}, filter, decode)
 	n := 0
 	for range s.C {
@@ -77,14 +88,14 @@ func TestStream(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if n != 600 || s.Skipped() != 200 {
-		t.Errorf("got %d items, %d skipped", n, s.Skipped())
+	if n != 400 || s.Skipped() != 200 || s.Failed() != 200 || s.FirstFailure() == nil {
+		t.Errorf("got %d items, %d skipped, %d failed (%v)", n, s.Skipped(), s.Failed(), s.FirstFailure())
 	}
 }
 
 func TestStreamMissingFile(t *testing.T) {
 	s := NewStream(context.Background(), filepath.Join(t.TempDir(), "missing.txt.gz"), StreamOptions{},
-		func([]byte) bool { return true }, func(l []byte) ([]byte, bool) { return l, true })
+		func([]byte) bool { return true }, func(l []byte) ([]byte, error) { return l, nil })
 	for range s.C {
 	}
 
@@ -100,7 +111,7 @@ func TestStreamStop(t *testing.T) {
 	}
 
 	s := NewStream(context.Background(), path, StreamOptions{Workers: 2},
-		func([]byte) bool { return true }, func(l []byte) ([]byte, bool) { return l, true })
+		func([]byte) bool { return true }, func(l []byte) ([]byte, error) { return l, nil })
 	<-s.C
 	s.Stop() // must not deadlock
 }

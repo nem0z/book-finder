@@ -4,11 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 
 	"github.com/nem0z/book-finder/internal/oldump"
 )
 
 const englishLanguage = "eng"
+
+var (
+	errNoWorkKey    = fmt.Errorf("%w: edition has no work key", oldump.ErrSkip)
+	errNotCandidate = fmt.Errorf("%w: work is not a fiction candidate", oldump.ErrSkip)
+)
 
 // editionRow is what a decode worker extracts from an edition of a candidate work.
 type editionRow struct {
@@ -16,47 +23,47 @@ type editionRow struct {
 	facts  editionFacts
 }
 
-// candidateWork returns the short ID of the candidate work an edition belongs to, or "" when the
-// edition has no work reference, the reference is invalid, or the work is not a candidate. It only
-// reads the raw line (the first "/works/OL..." key in it), so it is cheap enough for the filter.
-func (l *loader) candidateWork(raw []byte) string {
+// candidateWork returns the short ID of the candidate work an edition belongs to. It returns
+// errNoWorkKey when the edition has no work key, and errNotCandidate when the key is invalid or the
+// work is not a candidate. It only reads the raw line (the first "/works/OL..." key in it), so it is
+// cheap enough for the filter; the common errors are preallocated for the same reason.
+func (l *loader) candidateWork(raw []byte) (string, error) {
 	key, ok := oldump.EditionWorkKey(raw)
 	if !ok {
-		return ""
+		return "", errNoWorkKey
 	}
 
 	full, err := l.redirects.Resolve(key)
 	if err != nil {
-		return ""
+		return "", errors.Join(errNotCandidate, err)
 	}
 
 	id := oldump.ShortKey(full)
 	if _, ok := l.works[id]; !ok {
-		return ""
+		return "", errNotCandidate
 	}
 
-	return id
+	return id, nil
 }
 
 // decodeEdition runs on decode workers. Lines reaching it already belong to a candidate work.
-func (l *loader) decodeEdition(line []byte) (editionRow, bool) {
-	_, _, data, ok := oldump.SplitRecord(line)
-	if !ok {
-		return editionRow{}, false
+func (l *loader) decodeEdition(line []byte) (editionRow, error) {
+	_, key, data, err := splitRecord(line)
+	if err != nil {
+		return editionRow{}, err
 	}
 
-	workID := l.candidateWork(data)
-	if workID == "" {
-		return editionRow{}, false
+	workID, err := l.candidateWork(data)
+	if err != nil {
+		return editionRow{}, err
 	}
 
 	var e oldump.Edition
 	if err := json.Unmarshal(data, &e); err != nil {
-		l.decodeErrors.Add(1)
-		return editionRow{}, false
+		return editionRow{}, fmt.Errorf("edition %s: %w", key, err)
 	}
 
-	return editionRow{workID: workID, facts: l.editionFacts(&e)}, true
+	return editionRow{workID: workID, facts: l.editionFacts(&e)}, nil
 }
 
 func (l *loader) editionFacts(e *oldump.Edition) editionFacts {
@@ -70,16 +77,18 @@ func (l *loader) editionFacts(e *oldump.Edition) editionFacts {
 		coverID:     oldump.FirstCover(e.Covers),
 	}
 
+	// Both are kept: workAgg.originalLanguage prefers translated_from and falls back to the language
+	// of the earliest edition.
+	for _, t := range e.TranslatedFrom {
+		if code := oldump.ShortKey(string(t)); code != "" {
+			f.translatedFrom = append(f.translatedFrom, code)
+		}
+	}
+
 	for _, lang := range e.Languages {
 		if code := oldump.ShortKey(string(lang)); code != "" {
 			f.firstLanguage = code
 			break
-		}
-	}
-
-	for _, t := range e.TranslatedFrom {
-		if code := oldump.ShortKey(string(t)); code != "" {
-			f.translatedFrom = append(f.translatedFrom, code)
 		}
 	}
 
@@ -102,7 +111,12 @@ func firstISBN13(values []string) string {
 // genres. Nothing is written to the database; editions are not stored.
 func (l *loader) loadEditions(ctx context.Context) error {
 	filter := func(line []byte) bool {
-		return bytes.HasPrefix(line, typeEdition) && l.candidateWork(line) != ""
+		if !bytes.HasPrefix(line, typeEdition) {
+			return false
+		}
+
+		_, err := l.candidateWork(line)
+		return err == nil
 	}
 
 	s := oldump.NewStream(ctx, l.opts.Sources.Editions, l.streamOpts("editions"), filter, l.decodeEdition)
@@ -111,13 +125,9 @@ func (l *loader) loadEditions(ctx context.Context) error {
 		l.stats.Editions++
 	}
 
-	for _, a := range l.works {
-		if a.english > 0 {
-			l.stats.WorksWithEnglishEdition++
-		}
-	}
+	err := s.Err()
+	l.countFailures("editions", s.Failed(), s.FirstFailure())
+	l.log.Info("editions read", "editions", l.stats.Editions)
 
-	l.log.Info("editions read", "editions", l.stats.Editions, "works with an English edition", l.stats.WorksWithEnglishEdition)
-
-	return s.Err()
+	return err
 }
