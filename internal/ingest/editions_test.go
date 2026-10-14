@@ -3,6 +3,7 @@ package ingest
 import (
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/nem0z/book-finder/internal/oldump"
@@ -29,7 +30,14 @@ func TestLoadEditions(t *testing.T) {
 		t.Errorf("OL1W best edition: %+v", b)
 	}
 
-	if !slices.Equal(w.genres, []string{"Fiction", "Thriller"}) {
+	// Editions arrive in no fixed order, so the order and the first spelling seen ("Fiction." or
+	// "fiction") vary.
+	genres := slices.Clone(w.genres)
+	for i, g := range genres {
+		genres[i] = strings.ToLower(g)
+	}
+
+	if slices.Sort(genres); !slices.Equal(genres, []string{"fiction", "thriller"}) {
 		t.Errorf("OL1W genres: %v", w.genres)
 	}
 
