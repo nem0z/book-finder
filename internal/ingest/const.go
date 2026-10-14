@@ -5,4 +5,5 @@ package ingest
 var (
 	typeRedirect = []byte("/type/redirect\t")
 	typeWork     = []byte("/type/work\t")
+	typeEdition  = []byte("/type/edition\t")
 )

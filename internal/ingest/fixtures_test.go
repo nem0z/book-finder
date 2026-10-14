@@ -123,3 +123,32 @@ func worksFixture(t *testing.T, dir string) string {
 			"subjects": "Fiction", "authors": 5}},
 	}, true)
 }
+
+// editionsFixture, for the candidates of worksFixture (OL1W, OL2W, OL4W, OL6W; OL1W has a description):
+// OL1W has two English editions, one through a redirected work key; OL2W only a Norwegian one; OL4W a
+// French edition then an English one with a description; OL6W an English one. OL6M is an edition of a
+// work that is not a candidate, OL7M has no work and OL9M has an author key where a work is expected.
+func editionsFixture(t *testing.T, dir string) string {
+	eng := []any{ref("/languages/eng")}
+	return dumpFile(t, dir, "editions.txt.gz", []rec{
+		{"/type/edition", "/books/OL1M", map[string]any{"key": "/books/OL1M", "works": []any{ref("/works/OL1W")},
+			"languages": eng, "translated_from": []any{ref("/languages/nor")}, "publish_date": "June 13, 2018",
+			"number_of_pages": 480, "isbn_13": []any{"978-0-00-000000-1"}, "genres": []any{"Fiction."}, "covers": []any{7}}},
+		{"/type/edition", "/books/OL2M", map[string]any{"key": "/books/OL2M", "works": []any{ref("/works/OL99W")},
+			"languages": eng, "publish_date": "2019", "number_of_pages": "512",
+			"description": text("An English edition description."), "genres": []any{"Thriller", "fiction"}}},
+		{"/type/edition", "/books/OL3M", map[string]any{"key": "/books/OL3M", "works": []any{ref("/works/OL2W")},
+			"languages": []any{ref("/languages/nor")}, "publish_date": "2017"}},
+		{"/type/edition", "/books/OL4M", map[string]any{"key": "/books/OL4M", "works": []any{ref("/works/OL4W")},
+			"languages": []any{ref("/languages/fre")}, "publish_date": "1950"}},
+		{"/type/edition", "/books/OL5M", map[string]any{"key": "/books/OL5M", "works": []any{ref("/works/OL4W")},
+			"languages": eng, "publish_date": "c1990", "description": "A French novel, translated."}},
+		{"/type/edition", "/books/OL6M", map[string]any{"key": "/books/OL6M", "works": []any{ref("/works/OL3W")},
+			"languages": eng}},
+		{"/type/edition", "/books/OL7M", map[string]any{"key": "/books/OL7M", "languages": eng}},
+		{"/type/edition", "/books/OL8M", map[string]any{"key": "/books/OL8M", "works": []any{ref("/works/OL6W")},
+			"languages": eng, "number_of_pages": 3}},
+		{"/type/edition", "/books/OL9M", map[string]any{"key": "/books/OL9M", "works": []any{ref("/authors/OL1A")},
+			"languages": eng}},
+	}, true)
+}

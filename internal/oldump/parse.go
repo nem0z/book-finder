@@ -14,7 +14,7 @@ const (
 	fictionWord = "fiction"
 
 	isbn10Length    = 10
-	isbn13Length    = 13
+	ISBN13Length    = 13
 	isbnCheckDigitX = 'X'
 
 	yearDigits = 4
@@ -177,7 +177,7 @@ func NormalizeISBN(s string) string {
 		}
 	}
 
-	if n := b.Len(); n == isbn10Length || n == isbn13Length {
+	if n := b.Len(); n == isbn10Length || n == ISBN13Length {
 		return b.String()
 	}
 
