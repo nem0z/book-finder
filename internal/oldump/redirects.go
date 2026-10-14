@@ -40,38 +40,56 @@ var kinds = [...]struct {
 }
 
 // Redirects maps merged Open Library records to the records that replaced them, by ID number, with
-// one map per kind ("/works/OL45804W" is 45804 in the work map). See docs/redirects.md.
-type Redirects map[kind]map[uint32]uint32
+// one map per kind ("/works/OL45804W" is 45804 in the works map). Create it with NewRedirects.
+// See docs/redirects.md.
+type Redirects struct {
+	works, authors, editions map[uint32]uint32
+}
+
+func NewRedirects() *Redirects {
+	return &Redirects{works: map[uint32]uint32{}, authors: map[uint32]uint32{}, editions: map[uint32]uint32{}}
+}
+
+// Len returns the number of redirects stored.
+func (r *Redirects) Len() int {
+	return len(r.works) + len(r.authors) + len(r.editions)
+}
+
+// mapFor returns the map holding redirects of kind k.
+func (r *Redirects) mapFor(k kind) map[uint32]uint32 {
+	switch k {
+	case work:
+		return r.works
+	case author:
+		return r.authors
+	default:
+		return r.editions
+	}
+}
 
 // Add registers a redirect. It returns false, and records nothing, when either key is invalid or the
 // two keys are of different kinds (a work redirected to an edition).
-func (r Redirects) Add(from, to string) bool {
+func (r *Redirects) Add(from, to string) bool {
 	fromKind, fromNum, _, okFrom := parseKey(from)
 	toKind, toNum, _, okTo := parseKey(to)
 	if !okFrom || !okTo || fromKind != toKind {
 		return false
 	}
 
-	m := r[fromKind]
-	if m == nil {
-		m = map[uint32]uint32{}
-		r[fromKind] = m
-	}
-
-	m[fromNum] = toNum
+	r.mapFor(fromKind)[fromNum] = toNum
 
 	return true
 }
 
 // Resolve returns the current full key for a key found in any record: it fixes the key, then
 // follows redirects. It returns "" when key is not a valid work, author or edition key.
-func (r Redirects) Resolve(key string) string {
+func (r *Redirects) Resolve(key string) string {
 	k, n, full, ok := parseKey(key)
 	if !ok {
 		return ""
 	}
 
-	m := r[k]
+	m := r.mapFor(k)
 	start := n
 	for range maxRedirectHops {
 		next, ok := m[n]

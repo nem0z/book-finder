@@ -26,13 +26,13 @@ func TestRedirectsAdd(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		r := Redirects{}
+		r := NewRedirects()
 		if ok := r.Add(c.from, c.to); ok != c.ok {
 			t.Errorf("%q -> %q: got %v", c.from, c.to, ok)
 			continue
 		}
 
-		if !c.ok && len(r) != 0 {
+		if !c.ok && r.Len() != 0 {
 			t.Errorf("%q -> %q: rejected but stored %v", c.from, c.to, r)
 		}
 
@@ -45,7 +45,7 @@ func TestRedirectsAdd(t *testing.T) {
 }
 
 func TestRedirectsResolve(t *testing.T) {
-	r := Redirects{}
+	r := NewRedirects()
 	for from, to := range map[string]string{
 		"/works/OL1W": "/works/OL2W", "/works/OL2W": "/works/OL3W", // chain
 		"/works/OL5W": "/works/OL6W", "/works/OL6W": "/works/OL5W", // loop
