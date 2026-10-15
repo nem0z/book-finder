@@ -65,6 +65,16 @@ Embeds the 10,000 most-rated works with a clean description (at least 300 bytes,
 Ollama. Without `-limit` it embeds every eligible work, which takes about 11 hours on a 16-core CPU. It only
 computes missing or outdated vectors, so it can be stopped with Ctrl+C and run again.
 
+## Search
+
+```sh
+go run ./cmd/search "a melancholic story about memory and loss"
+go run ./cmd/search -max-year 1980 -lang jpn -n 5 "a lonely man drifting through life"
+```
+
+Returns the books whose vector is closest to the query's, with optional filters on first publication year,
+page count and original language (`-json` for machine-readable output). Only works with a vector are searched.
+
 ## Development
 
 ```sh
