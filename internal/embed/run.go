@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"slices"
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -81,6 +84,13 @@ type cursor struct {
 	id         string
 }
 
+// page is what readPage read: the jobs to run, the position of the last work and how many works.
+type page struct {
+	jobs []job
+	last cursor
+	read int
+}
+
 type runner struct {
 	pool  *pgxpool.Pool
 	emb   Embedder
@@ -137,68 +147,91 @@ func Run(ctx context.Context, pool *pgxpool.Pool, emb Embedder, opts Options) (S
 }
 
 func (r *runner) embedEligible(ctx context.Context) error {
-	pos := cursor{negRatings: -1 << 31}
-	for r.opts.Limit <= 0 || r.stats.Considered < int64(r.opts.Limit) {
-		size := defaultPageSize
-		if r.opts.Limit > 0 {
-			size = min(size, r.opts.Limit-int(r.stats.Considered))
-		}
-
-		jobs, next, n, err := r.readPage(ctx, pos, size)
+	last := cursor{negRatings: math.MinInt32}
+	for size := r.pageSize(); size > 0; size = r.pageSize() {
+		p, err := r.readPage(ctx, last, size)
 		if err != nil {
 			return err
 		}
 
-		for i := 0; i < len(jobs); i += r.opts.BatchSize {
-			if err := r.embedBatch(ctx, jobs[i:min(i+r.opts.BatchSize, len(jobs))]); err != nil {
-				return err
-			}
-
-			r.maybeReport()
+		if err := r.embedJobs(ctx, p.jobs); err != nil {
+			return err
 		}
 
-		if n < size {
+		if p.read < size {
 			return nil
 		}
 
-		pos = next
+		last = p.last
 	}
 
 	return nil
 }
 
-// readPage reads up to size eligible works after pos and returns those needing a vector, the new
-// position and the number of works read.
-func (r *runner) readPage(ctx context.Context, pos cursor, size int) ([]job, cursor, int, error) {
-	rows, err := r.pool.Query(ctx, eligibleSQL, r.opts.MinDescription, pos.negRatings, pos.id, size)
+// pageSize returns how many works to read next: a full page, fewer near the limit, 0 once it is reached.
+func (r *runner) pageSize() int {
+	if r.opts.Limit <= 0 {
+		return defaultPageSize
+	}
+
+	return min(defaultPageSize, r.opts.Limit-int(r.stats.Considered))
+}
+
+// readPage reads up to size eligible works after last.
+func (r *runner) readPage(ctx context.Context, last cursor, size int) (page, error) {
+	p := page{last: last}
+	rows, err := r.pool.Query(ctx, eligibleSQL, r.opts.MinDescription, last.negRatings, last.id, size)
 	if err != nil {
-		return nil, pos, 0, fmt.Errorf("read works: %w", err)
+		return p, fmt.Errorf("read works: %w", err)
 	}
 	defer rows.Close()
 
-	var jobs []job
-	n := 0
 	for rows.Next() {
-		var b Book
-		var id, hash string
-		var ratings int
-		if err := rows.Scan(&id, &b.Title, &b.Subtitle, &b.Authors, &b.Genres, &b.Subjects, &b.Description, &ratings, &hash); err != nil {
-			return nil, pos, n, fmt.Errorf("read works: %w", err)
-		}
-
-		n++
-		pos = cursor{negRatings: -ratings, id: id}
-		doc := Document(b)
-		if want := ContentHash(r.emb.Model(), doc); want != hash {
-			jobs = append(jobs, job{id: id, hash: want, doc: doc})
-		} else {
-			r.stats.UpToDate++
+		if err := r.readRow(rows, &p); err != nil {
+			return p, err
 		}
 	}
 
-	r.stats.Considered += int64(n)
+	return p, rows.Err()
+}
 
-	return jobs, pos, n, rows.Err()
+// readRow adds the current row to p: it moves p's position, and adds a job when the work's vector is
+// missing or was computed from another model or text.
+func (r *runner) readRow(rows pgx.Rows, p *page) error {
+	var b Book
+	var id, hash string
+	var ratings int
+	if err := rows.Scan(&id, &b.Title, &b.Subtitle, &b.Authors, &b.Genres, &b.Subjects, &b.Description, &ratings, &hash); err != nil {
+		return fmt.Errorf("read works: %w", err)
+	}
+
+	p.read++
+	p.last = cursor{negRatings: -ratings, id: id}
+	r.stats.Considered++
+
+	doc := Document(b)
+	want := ContentHash(r.emb.Model(), doc)
+	if want == hash {
+		r.stats.UpToDate++
+		return nil
+	}
+
+	p.jobs = append(p.jobs, job{id: id, hash: want, doc: doc})
+
+	return nil
+}
+
+// embedJobs embeds and stores jobs in batches, reporting progress between batches.
+func (r *runner) embedJobs(ctx context.Context, jobs []job) error {
+	for batch := range slices.Chunk(jobs, r.opts.BatchSize) {
+		if err := r.embedBatch(ctx, batch); err != nil {
+			return err
+		}
+
+		r.maybeReport()
+	}
+
+	return nil
 }
 
 func (r *runner) embedBatch(ctx context.Context, batch []job) error {
