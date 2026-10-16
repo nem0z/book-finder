@@ -67,7 +67,8 @@ type Result struct {
 	OriginalLanguage string   `json:"original_language,omitempty"`
 	Description      string   `json:"description"`
 	RatingCount      int      `json:"rating_count"`
-	Similarity       float64  `json:"similarity"` // cosine similarity, 1 = same direction
+	Similarity       float64  `json:"similarity"`             // cosine similarity, 1 = same direction
+	RerankScore      float64  `json:"rerank_score,omitempty"` // set by Rerank; higher is more relevant
 }
 
 // Semantic returns up to limit works whose vector is closest to the query's and that match f.
