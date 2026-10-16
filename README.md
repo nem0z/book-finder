@@ -8,7 +8,7 @@ Status: proof of concept, in progress. See [docs/schema.md](docs/schema.md) for 
 ## Requirements
 
 - Go 1.27+
-- Postgres 17 with [pgvector](https://github.com/pgvector/pgvector) 0.8+ and [Ollama](https://ollama.com) (the provided `docker-compose.yml` runs both)
+- Postgres 17 with [pgvector](https://github.com/pgvector/pgvector) 0.8+, [Ollama](https://ollama.com) and [Text Embeddings Inference](https://github.com/huggingface/text-embeddings-inference) (the provided `docker-compose.yml` runs all three)
 
 ## Start Postgres
 
@@ -72,8 +72,13 @@ go run ./cmd/search "a melancholic story about memory and loss"
 go run ./cmd/search -max-year 1980 -lang jpn -n 5 "a lonely man drifting through life"
 ```
 
-Returns the books whose vector is closest to the query's, with optional filters on first publication year,
-page count and original language (`-json` for machine-readable output). Only works with a vector are searched.
+Finds the 30 books whose vector is closest to the query's (`-candidates`), then re-orders them with a re-ranker
+that reads the query and each book together, and prints the best 10 (`-n`). Optional filters on first
+publication year, page count and original language; `-json` for machine-readable output. Only works with a
+vector are searched.
+
+The re-ranker (`gte-reranker-modernbert-base`) runs in the `reranker` service of `docker-compose.yml`. On a
+16-core CPU it adds about 3 s per search; `-no-rerank` skips it and ranks by vector similarity only.
 
 ## Development
 

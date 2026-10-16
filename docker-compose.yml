@@ -38,6 +38,18 @@ services:
     volumes:
       - ollama:/root/.ollama
 
+  reranker:
+    # Re-orders the best search candidates with a cross-encoder that reads the query and each book
+    # together (gte-reranker-modernbert-base, 149M). Served by Hugging Face Text Embeddings Inference
+    # on CPU; the model is downloaded on first start and kept in the reranker volume.
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    command: ["--model-id", "Alibaba-NLP/gte-reranker-modernbert-base", "--max-client-batch-size", "100"]
+    ports:
+      - "8081:80"
+    volumes:
+      - reranker:/data
+
 volumes:
   pgdata:
   ollama:
+  reranker:
