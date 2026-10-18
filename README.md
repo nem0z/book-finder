@@ -107,6 +107,9 @@ npm run dev
 
 Then open http://localhost:5173. In development, Vite forwards `/search` to the API on `localhost:8080`.
 
+Or run everything in Docker: `docker compose up -d --build`, then open http://localhost:3000. The `web` service
+serves the built page with nginx and forwards `/search` to the `api` service.
+
 ## Development
 
 ```sh
