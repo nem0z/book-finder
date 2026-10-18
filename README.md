@@ -91,6 +91,19 @@ curl "http://localhost:8080/search?q=a+young+bride+haunted+by+her+husband's+dead
 authors, year, pages, full description, tags, cover URL and Open Library link. Flags: `-addr`
 (default `localhost:8080`), `-no-rerank`, and the same `-db`, `-ollama` and `-reranker` as `cmd/search`.
 
+## Web app
+
+A React page with a search box and the results below: cover, title, authors, year, pages, description
+(long ones cut, with "See more") and tags. It needs Node 24+ and the API running (`go run ./cmd/api`):
+
+```sh
+cd web
+npm install
+npm run dev
+```
+
+Then open http://localhost:5173. In development, Vite forwards `/search` to the API on `localhost:8080`.
+
 ## Development
 
 ```sh

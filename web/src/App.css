@@ -1,0 +1,135 @@
+:root {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: #1f2328;
+  background: #f6f7f9;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 2rem 1rem 4rem;
+}
+
+h1 {
+  margin: 0 0 1rem;
+}
+
+.search {
+  display: flex;
+  gap: 0.75rem;
+  align-items: stretch;
+}
+
+.search textarea {
+  flex: 1;
+  padding: 0.75rem;
+  font: inherit;
+  border: 1px solid #c9ced6;
+  border-radius: 8px;
+  resize: vertical;
+}
+
+.search button {
+  padding: 0 1.5rem;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: #2f6feb;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.search button:disabled {
+  background: #9db7ef;
+  cursor: default;
+}
+
+.error {
+  color: #b42318;
+}
+
+.results {
+  list-style: none;
+  padding: 0;
+  margin: 1.5rem 0 0;
+  display: grid;
+  gap: 1rem;
+}
+
+.book {
+  display: flex;
+  gap: 1rem;
+  padding: 1rem;
+  background: #fff;
+  border: 1px solid #e3e6ea;
+  border-radius: 10px;
+}
+
+.cover {
+  flex: none;
+  width: 110px;
+  height: 165px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #e3e6ea;
+}
+
+.details {
+  min-width: 0;
+}
+
+.details h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.details h2 a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.details h2 a:hover {
+  text-decoration: underline;
+}
+
+.meta {
+  margin: 0.25rem 0 0.75rem;
+  color: #59636e;
+}
+
+.description {
+  margin: 0;
+  white-space: pre-line;
+}
+
+.more {
+  margin-top: 0.25rem;
+  padding: 0;
+  font: inherit;
+  color: #2f6feb;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+}
+
+.tags li {
+  padding: 0.1rem 0.6rem;
+  font-size: 0.85rem;
+  background: #eef1f5;
+  border-radius: 999px;
+}
