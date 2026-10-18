@@ -75,17 +75,9 @@ func run(ctx context.Context, url, ollama string, rr search.Reranker, query stri
 	}
 	defer pool.Close()
 
-	emb := embed.NewOllama(ollama, embed.DefaultModel)
-	if rr == nil {
-		return search.Semantic(ctx, pool, emb, query, f, limit)
-	}
+	e := &search.Engine{Pool: pool, Embedder: embed.NewOllama(ollama, embed.DefaultModel), Reranker: rr, Candidates: candidates}
 
-	results, err := search.Semantic(ctx, pool, emb, query, f, max(candidates, limit))
-	if err != nil {
-		return nil, err
-	}
-
-	return search.Rerank(ctx, rr, query, results, limit)
+	return e.Search(ctx, query, f, limit)
 }
 
 func print(results []search.Result) {

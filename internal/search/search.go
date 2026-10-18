@@ -27,7 +27,8 @@ const semanticSQL = `
 WITH nearest AS MATERIALIZED (
     SELECT w.id, w.title, w.author_names, coalesce(w.first_publish_year, 0) AS year,
            coalesce(w.page_count, 0) AS pages, coalesce(w.original_language, '') AS lang,
-           w.description, w.rating_count, e.embedding <=> $1::halfvec AS distance
+           w.description, w.genres, w.subjects, coalesce(w.cover_id, 0) AS cover_id, w.rating_count,
+           e.embedding <=> $1::halfvec AS distance
     FROM work_embeddings e
     JOIN works w ON w.id = e.work_id
     WHERE e.model = $2
@@ -39,7 +40,8 @@ WITH nearest AS MATERIALIZED (
     ORDER BY e.embedding <=> $1::halfvec
     LIMIT $8
 )
-SELECT id, title, author_names, year, pages, lang, description, rating_count, 1 - distance
+SELECT id, title, author_names, year, pages, lang, description, genres, subjects, cover_id, rating_count,
+       1 - distance
 FROM nearest
 ORDER BY distance`
 
@@ -66,6 +68,8 @@ type Result struct {
 	Pages            int      `json:"pages,omitempty"`
 	OriginalLanguage string   `json:"original_language,omitempty"`
 	Description      string   `json:"description"`
+	Tags             []string `json:"tags"`               // genres then subjects, without generic ones
+	CoverID          int64    `json:"cover_id,omitempty"` // Open Library cover ID
 	RatingCount      int      `json:"rating_count"`
 	Similarity       float64  `json:"similarity"`             // cosine similarity, 1 = same direction
 	RerankScore      float64  `json:"rerank_score,omitempty"` // set by Rerank; higher is more relevant
@@ -107,12 +111,13 @@ func Semantic(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query 
 	for rows.Next() {
 		var r Result
 		var year, pages int16
+		var genres, subjects []string
 		if err := rows.Scan(&r.ID, &r.Title, &r.Authors, &year, &pages, &r.OriginalLanguage, &r.Description,
-			&r.RatingCount, &r.Similarity); err != nil {
+			&genres, &subjects, &r.CoverID, &r.RatingCount, &r.Similarity); err != nil {
 			return nil, err
 		}
 
-		r.Year, r.Pages = int(year), int(pages)
+		r.Year, r.Pages, r.Tags = int(year), int(pages), embed.Topics(genres, subjects)
 		out = append(out, r)
 	}
 

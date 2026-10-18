@@ -80,6 +80,17 @@ vector are searched.
 The re-ranker (`gte-reranker-modernbert-base`) runs in the `reranker` service of `docker-compose.yml`. On a
 16-core CPU it adds about 3 s per search; `-no-rerank` skips it and ranks by vector similarity only.
 
+## API
+
+```sh
+go run ./cmd/api
+curl "http://localhost:8080/search?q=a+young+bride+haunted+by+her+husband's+dead+first+wife"
+```
+
+`GET /search?q=<description>` returns the 10 best matches (vector search, then re-ranking) as JSON: title,
+authors, year, pages, full description, tags, cover URL and Open Library link. Flags: `-addr`
+(default `localhost:8080`), `-no-rerank`, and the same `-db`, `-ollama` and `-reranker` as `cmd/search`.
+
 ## Development
 
 ```sh
