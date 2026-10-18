@@ -49,3 +49,10 @@ jobs:
       - run: npm ci
       # Type-checks, then builds.
       - run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build the API image
+        run: docker build -t book-finder-api .

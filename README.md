@@ -87,6 +87,9 @@ go run ./cmd/api
 curl "http://localhost:8080/search?q=a+young+bride+haunted+by+her+husband's+dead+first+wife"
 ```
 
+Or in Docker, with the other services: `docker compose up -d api` (rebuild after code changes with
+`docker compose up -d --build api`).
+
 `GET /search?q=<description>` returns the 10 best matches (vector search, then re-ranking) as JSON: title,
 authors, year, pages, full description, tags, cover URL and Open Library link. Flags: `-addr`
 (default `localhost:8080`), `-no-rerank`, and the same `-db`, `-ollama` and `-reranker` as `cmd/search`.

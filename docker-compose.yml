@@ -49,6 +49,23 @@ services:
     volumes:
       - reranker:/data
 
+  api:
+    # GET /search on http://localhost:8080. Needs the catalogue loaded and the vectors computed.
+    build: .
+    environment:
+      DATABASE_URL: postgres://bookfinder:bookfinder@db:5432/bookfinder?sslmode=disable
+      OLLAMA_URL: http://ollama:11434
+      RERANKER_URL: http://reranker:80
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      reranker:
+        condition: service_started
+
 volumes:
   pgdata:
   ollama:
