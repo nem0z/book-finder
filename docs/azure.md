@@ -92,9 +92,28 @@ planned.
 | `postgresPassword` | – | letters and digits only (it goes into a URL) |
 | `deployApps` | `true` | `false` on the first run, before the images are in the registry |
 | `imageTag` | `latest` | |
-| `rerankerGpu` | `false` | `true` runs the re-ranker on a T4 GPU (see below) |
+| `rerankerGpu` | `false` | `true` runs the re-ranker on a T4 GPU (see [Re-ranker on CPU](#re-ranker-on-cpu)) |
 | `webApiMinReplicas` | `0` | `1` keeps web and api running |
 | `modelCooldownSeconds` | `1800` | how long ollama and the re-ranker stay up after the last request |
+
+## Deploying
+
+Needs the [Azure CLI](https://learn.microsoft.com/cli/azure/) (`az login`) and, for the database copy, the local
+Docker stack with a loaded database. The password is chosen once (letters and digits, at least 16) and must be the
+same on every run.
+
+```powershell
+$env:BOOKFINDER_DB_PASSWORD = '<password>'
+./deploy/azure/deploy.ps1      # infrastructure, images (built in the registry), apps; prints the URL
+./deploy/azure/restore-db.ps1  # copies the local database to Azure (about 20 minutes)
+```
+
+- `deploy.ps1` tags the images with the current commit. `-SkipImages` redeploys without rebuilding, and
+  `-RerankerGpu $true` moves the re-ranker to a T4 (the script removes the old re-ranker when switching, because
+  Azure can't drop a workload profile that an app uses).
+- `restore-db.ps1` dumps the local database, uploads it as an image, and restores it with a one-off Container Apps
+  job, since the server is only reachable from inside the private network. It replaces what is in the Azure
+  database.
 
 ## Check before deploying
 
@@ -102,5 +121,3 @@ planned.
 az group create -n bookfinder-rg -l francecentral
 az deployment group what-if -g bookfinder-rg -f deploy/azure/main.bicep -p postgresPassword=<password> deployApps=false
 ```
-
-Building the images, deploying and copying the database are covered by the deployment script (next step).

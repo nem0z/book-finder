@@ -15,8 +15,8 @@ $env:BOOKFINDER_DB_PASSWORD = '<letters and digits>'
 param(
     [string]$ResourceGroup = 'bookfinder-rg',
     [string]$Location = 'francecentral',
-    # Run the re-ranker on a serverless T4 GPU; $false runs it on CPU.
-    [bool]$RerankerGpu = $true,
+    # Run the re-ranker on a serverless T4 GPU instead of CPU (scores differ from the local CPU build, see docs/azure.md).
+    [bool]$RerankerGpu = $false,
     # Image tag: the current commit by default.
     [string]$Tag = (git rev-parse --short HEAD),
     # Redeploy the apps without rebuilding the images (they must exist with this tag).
@@ -43,6 +43,16 @@ $common = @('-g', $ResourceGroup, '-f', $template, '-p', "postgresPassword=$pass
 
 Write-Host "Infrastructure in $ResourceGroup ($Location)..."
 Invoke-Az group create -n $ResourceGroup -l $Location -o none
+
+# Switching the re-ranker between GPU and CPU: Azure refuses to change the environment's workload profiles while an
+# app uses one, so the old re-ranker goes first. The apps step below recreates it.
+$rerankerProfile = az containerapp show -g $ResourceGroup -n reranker --query properties.workloadProfileName -o tsv 2>$null
+$wantedProfile = if ($RerankerGpu) { 'gpu-t4' } else { 'Consumption' }
+if ($LASTEXITCODE -eq 0 -and $rerankerProfile -and $rerankerProfile -ne $wantedProfile) {
+    Write-Host "Removing the re-ranker from $rerankerProfile..."
+    Invoke-Az containerapp delete -g $ResourceGroup -n reranker --yes -o none
+}
+
 $outputs = Invoke-Az deployment group create -n main @common -p deployApps=false --query properties.outputs -o json | ConvertFrom-Json
 $registry = $outputs.registryName.value
 
