@@ -6,6 +6,8 @@ ARG TEI_TAG=cpu-1.9
 # CPU builds also get the ONNX export: TEI runs it with ONNX Runtime, about 5 times faster on CPU than the
 # safetensors weights. GPU builds use the safetensors weights and skip it (600 MB).
 FROM curlimages/curl:latest AS model
+# The image runs as a non-root user, and some builders (Azure Container Registry) create WORKDIR as root.
+USER root
 ARG TEI_TAG
 ARG REPO=Alibaba-NLP/gte-reranker-modernbert-base
 ARG REVISION=f7481e6055501a30fb19d090657df9ec1f79ab2c
