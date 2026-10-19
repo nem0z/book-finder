@@ -66,6 +66,14 @@ services:
       reranker:
         condition: service_started
 
+  web:
+    # The search page on http://localhost:3000; nginx forwards /search to the api service.
+    build: ./web
+    ports:
+      - "3000:8080"
+    depends_on:
+      - api
+
 volumes:
   pgdata:
   ollama:

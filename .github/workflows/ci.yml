@@ -56,3 +56,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: build the API image
         run: docker build -t book-finder-api .
+      - name: build the web image
+        run: docker build -t book-finder-web web
