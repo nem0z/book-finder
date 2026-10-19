@@ -19,14 +19,14 @@ docker compose up -d
 This starts Postgres 17 with pgvector on `localhost:5432` (user, password and database: `bookfinder`), with
 settings tuned for bulk loading. Data is kept in the `pgdata` volume; `docker compose down -v` deletes it.
 
-## Start the embedding model
+## The models
 
-Semantic search uses [EmbeddingGemma](https://ai.google.dev/gemma/docs/embeddinggemma), served by Ollama. The
-same `docker compose up -d` starts Ollama on `localhost:11434`; download the model once (~620 MB):
+Semantic search uses [EmbeddingGemma](https://ai.google.dev/gemma/docs/embeddinggemma), served by Ollama on
+`localhost:11434`, and a re-ranker served by Text Embeddings Inference on `localhost:8081`. Both models are built
+into their images (`deploy/ollama`, `deploy/reranker`), so the first `docker compose up -d` builds them, downloading
+about 2 GB once; nothing is downloaded when a container starts.
 
-```sh
-docker compose exec ollama ollama pull embeddinggemma
-```
+All ports are published on `localhost` only.
 
 ## Create the schema
 

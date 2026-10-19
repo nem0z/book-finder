@@ -2,9 +2,10 @@ server {
     listen 8080;
     root /usr/share/nginx/html;
 
-    # The API service in docker-compose. A search takes a few seconds on CPU.
+    # The API: API_URL is filled in when the container starts (http://api:8080 in docker-compose). A search
+    # takes a few seconds on CPU.
     location /search {
-        proxy_pass http://api:8080;
+        proxy_pass ${API_URL};
         proxy_read_timeout 60s;
     }
 

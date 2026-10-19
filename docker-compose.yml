@@ -1,3 +1,5 @@
+# Local setup, for development and testing. Ports are published on localhost only, so the database and
+# models are not reachable from the network. The cloud setup is in deploy/azure.
 services:
   db:
     # Postgres 17 with pgvector (vector index for semantic search).
@@ -7,7 +9,7 @@ services:
       POSTGRES_PASSWORD: bookfinder
       POSTGRES_DB: bookfinder
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     shm_size: 1g
@@ -29,25 +31,19 @@ services:
       retries: 20
 
   ollama:
-    # Serves the EmbeddingGemma model used for semantic search. Pull it once with
-    # `docker compose exec ollama ollama pull embeddinggemma`; the model is kept in the ollama volume.
+    # Serves the EmbeddingGemma model used for semantic search; the model is built into the image.
     # Runs on CPU; to use an NVIDIA GPU, add a `deploy.resources.reservations.devices` entry.
-    image: ollama/ollama:latest
+    build: ./deploy/ollama
     ports:
-      - "11434:11434"
-    volumes:
-      - ollama:/root/.ollama
+      - "127.0.0.1:11434:11434"
 
   reranker:
     # Re-orders the best search candidates with a cross-encoder that reads the query and each book
     # together (gte-reranker-modernbert-base, 149M). Served by Hugging Face Text Embeddings Inference
-    # on CPU; the model is downloaded on first start and kept in the reranker volume.
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
-    command: ["--model-id", "Alibaba-NLP/gte-reranker-modernbert-base", "--max-client-batch-size", "100"]
+    # on CPU; the model is built into the image.
+    build: ./deploy/reranker
     ports:
-      - "8081:80"
-    volumes:
-      - reranker:/data
+      - "127.0.0.1:8081:80"
 
   api:
     # GET /search on http://localhost:8080. Needs the catalogue loaded and the vectors computed.
@@ -57,7 +53,7 @@ services:
       OLLAMA_URL: http://ollama:11434
       RERANKER_URL: http://reranker:80
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       db:
         condition: service_healthy
@@ -70,11 +66,9 @@ services:
     # The search page on http://localhost:3000; nginx forwards /search to the api service.
     build: ./web
     ports:
-      - "3000:8080"
+      - "127.0.0.1:3000:8080"
     depends_on:
       - api
 
 volumes:
   pgdata:
-  ollama:
-  reranker:
