@@ -23,4 +23,6 @@ COPY --from=model /tmp/model /model
 # TEI loads the model from this folder instead of the Hugging Face hub.
 ENV MODEL_ID=/model
 # Up to 100 texts per request: the API sends 30 candidates by default (TEI's own default is 32).
-CMD ["--max-client-batch-size", "100"]
+# float32 everywhere: on a T4, TEI defaults to float16, which degraded the ranking of this model (Rebecca and
+# Legends & Lattes dropped out of first place on our test queries). CPU already uses float32.
+CMD ["--max-client-batch-size", "100", "--dtype", "float32"]
