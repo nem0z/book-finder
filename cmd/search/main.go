@@ -15,6 +15,7 @@ import (
 
 	"github.com/nem0z/book-finder/internal/db"
 	"github.com/nem0z/book-finder/internal/embed"
+	"github.com/nem0z/book-finder/internal/rerank"
 	"github.com/nem0z/book-finder/internal/search"
 )
 
@@ -23,6 +24,9 @@ const excerptBytes = 220
 func main() {
 	url := flag.String("db", envOr("DATABASE_URL", db.DefaultURL), "Postgres connection URL (env DATABASE_URL)")
 	ollama := flag.String("ollama", envOr("OLLAMA_URL", embed.DefaultOllamaURL), "Ollama URL (env OLLAMA_URL)")
+	reranker := flag.String("reranker", envOr("RERANKER_URL", rerank.DefaultURL), "re-ranker URL (env RERANKER_URL)")
+	noRerank := flag.Bool("no-rerank", false, "rank by vector similarity only")
+	candidates := flag.Int("candidates", search.DefaultCandidates, "vector results passed to the re-ranker")
 	limit := flag.Int("n", search.DefaultLimit, "number of results")
 	asJSON := flag.Bool("json", false, "print the results as JSON")
 	var f search.Filters
@@ -43,7 +47,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	results, err := run(ctx, *url, *ollama, query, f, *limit)
+	var rr search.Reranker
+	if !*noRerank {
+		rr = rerank.NewTEI(*reranker)
+	}
+
+	results, err := run(ctx, *url, *ollama, rr, query, f, *limit, *candidates)
 	if err != nil {
 		slog.Error("search failed", "err", err)
 		os.Exit(1)
@@ -58,14 +67,17 @@ func main() {
 	print(results)
 }
 
-func run(ctx context.Context, url, ollama, query string, f search.Filters, limit int) ([]search.Result, error) {
+// run finds the closest books by vector, then re-orders the best candidates with rr when it is set.
+func run(ctx context.Context, url, ollama string, rr search.Reranker, query string, f search.Filters, limit, candidates int) ([]search.Result, error) {
 	pool, err := db.Connect(ctx, url, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer pool.Close()
 
-	return search.Semantic(ctx, pool, embed.NewOllama(ollama, embed.DefaultModel), query, f, limit)
+	e := &search.Engine{Pool: pool, Embedder: embed.NewOllama(ollama, embed.DefaultModel), Reranker: rr, Candidates: candidates}
+
+	return e.Search(ctx, query, f, limit)
 }
 
 func print(results []search.Result) {
@@ -83,7 +95,12 @@ func print(results []search.Result) {
 			fmt.Printf(" (%d)", r.Year)
 		}
 
-		fmt.Printf("  [similarity %.2f]\n    %s\n    https://openlibrary.org/works/%s\n\n", r.Similarity, excerpt(r.Description), r.ID)
+		fmt.Printf("  [similarity %.2f", r.Similarity)
+		if r.RerankScore != 0 {
+			fmt.Printf(", re-rank %.2f", r.RerankScore)
+		}
+
+		fmt.Printf("]\n    %s\n    https://openlibrary.org/works/%s\n\n", excerpt(r.Description), r.ID)
 	}
 }
 

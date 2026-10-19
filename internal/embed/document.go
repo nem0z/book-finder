@@ -39,7 +39,7 @@ func Document(b Book) Doc {
 		s.WriteString("By " + strings.Join(b.Authors, ", ") + "\n")
 	}
 
-	if t := topics(b.Genres, b.Subjects); len(t) > 0 {
+	if t := Topics(b.Genres, b.Subjects); len(t) > 0 {
 		s.WriteString("Topics: " + strings.Join(t, "; ") + "\n")
 	}
 
@@ -50,8 +50,8 @@ func Document(b Book) Doc {
 	return Doc{Title: title, Text: strings.TrimSpace(s.String())}
 }
 
-// topics returns genres then subjects, without duplicates (any case) or generic labels.
-func topics(genres, subjects []string) []string {
+// Topics returns genres then subjects, without duplicates (any case) or generic labels, at most 15.
+func Topics(genres, subjects []string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, list := range [][]string{genres, subjects} {

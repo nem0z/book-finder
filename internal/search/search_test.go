@@ -58,11 +58,11 @@ func (f fakeQuery) EmbedQuery(context.Context, string) ([]float32, error) { retu
 func TestSemantic(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx, `INSERT INTO works (id, title, description, first_publish_year, page_count, original_language) VALUES
-		('OL1W', 'Closest', 'd', 1950, 200, 'jpn'),
-		('OL2W', 'Second', 'd', 2001, 400, 'eng'),
-		('OL3W', 'Far', 'd', 1960, 150, 'eng'),
-		('OL4W', 'Other model', 'd', 1950, 200, 'jpn')`); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO works (id, title, description, first_publish_year, page_count, original_language, genres, subjects, cover_id) VALUES
+		('OL1W', 'Closest', 'd', 1950, 200, 'jpn', '{Thriller}', '{Fiction,thriller,Oslo}', 7),
+		('OL2W', 'Second', 'd', 2001, 400, 'eng', '{}', '{}', NULL),
+		('OL3W', 'Far', 'd', 1960, 150, 'eng', '{}', '{}', NULL),
+		('OL4W', 'Other model', 'd', 1950, 200, 'jpn', '{}', '{}', NULL)`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -107,6 +107,11 @@ func TestSemantic(t *testing.T) {
 
 	if got := ids(Filters{MinYear: 1955, OriginalLanguage: "eng"}, 0); !slices.Equal(got, []string{"OL2W", "OL3W"}) {
 		t.Errorf("year and language: %v", got)
+	}
+
+	res, err := Semantic(ctx, pool, fakeQuery{"fake"}, "a query", Filters{}, 1)
+	if err != nil || len(res) != 1 || !slices.Equal(res[0].Tags, []string{"Thriller", "Oslo"}) || res[0].CoverID != 7 {
+		t.Errorf("tags and cover: %+v, %v", res, err)
 	}
 
 	if _, err := Semantic(ctx, pool, fakeQuery{"fake"}, " ", Filters{}, 0); !errors.Is(err, ErrEmptyQuery) {

@@ -8,7 +8,7 @@ Status: proof of concept, in progress. See [docs/schema.md](docs/schema.md) for 
 ## Requirements
 
 - Go 1.27+
-- Postgres 17 with [pgvector](https://github.com/pgvector/pgvector) 0.8+ and [Ollama](https://ollama.com) (the provided `docker-compose.yml` runs both)
+- Postgres 17 with [pgvector](https://github.com/pgvector/pgvector) 0.8+, [Ollama](https://ollama.com) and [Text Embeddings Inference](https://github.com/huggingface/text-embeddings-inference) (the provided `docker-compose.yml` runs all three)
 
 ## Start Postgres
 
@@ -72,8 +72,40 @@ go run ./cmd/search "a melancholic story about memory and loss"
 go run ./cmd/search -max-year 1980 -lang jpn -n 5 "a lonely man drifting through life"
 ```
 
-Returns the books whose vector is closest to the query's, with optional filters on first publication year,
-page count and original language (`-json` for machine-readable output). Only works with a vector are searched.
+Finds the 30 books whose vector is closest to the query's (`-candidates`), then re-orders them with a re-ranker
+that reads the query and each book together, and prints the best 10 (`-n`). Optional filters on first
+publication year, page count and original language; `-json` for machine-readable output. Only works with a
+vector are searched.
+
+The re-ranker (`gte-reranker-modernbert-base`) runs in the `reranker` service of `docker-compose.yml`. On a
+16-core CPU it adds about 3 s per search; `-no-rerank` skips it and ranks by vector similarity only.
+
+## API
+
+```sh
+go run ./cmd/api
+curl "http://localhost:8080/search?q=a+young+bride+haunted+by+her+husband's+dead+first+wife"
+```
+
+Or in Docker, with the other services: `docker compose up -d api` (rebuild after code changes with
+`docker compose up -d --build api`).
+
+`GET /search?q=<description>` returns the 10 best matches (vector search, then re-ranking) as JSON: title,
+authors, year, pages, full description, tags, cover URL and Open Library link. Flags: `-addr`
+(default `localhost:8080`), `-no-rerank`, and the same `-db`, `-ollama` and `-reranker` as `cmd/search`.
+
+## Web app
+
+A React page with a search box and the results below: cover, title, authors, year, pages, description
+(long ones cut, with "See more") and tags. It needs Node 24+ and the API running (`go run ./cmd/api`):
+
+```sh
+cd web
+npm install
+npm run dev
+```
+
+Then open http://localhost:5173. In development, Vite forwards `/search` to the API on `localhost:8080`.
 
 ## Development
 

@@ -1,0 +1,8 @@
+# Keep the build context small: only go.mod, go.sum, cmd/ and internal/ are needed.
+.git
+.github
+data
+docs
+web
+*.txt.gz
+*.md
