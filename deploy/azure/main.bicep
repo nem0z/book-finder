@@ -20,8 +20,8 @@ param deployApps bool = true
 @description('Tag of the images in the registry.')
 param imageTag string = 'latest'
 
-@description('Run the re-ranker on a serverless NVIDIA T4. With false it runs on CPU: slower, but no GPU quota needed.')
-param rerankerGpu bool = true
+@description('Run the re-ranker on a serverless NVIDIA T4 instead of CPU. Off by default: the GPU build scores differently from the CPU build used locally (see docs/azure.md).')
+param rerankerGpu bool = false
 
 @description('Minimum replicas of web and api. 1 keeps them running (a few dollars a month each), 0 lets them stop when idle.')
 @allowed([0, 1])
@@ -194,8 +194,8 @@ module reranker 'app.bicep' = if (deployApps) {
     name: 'reranker'
     image: '${registryServer}/bookfinder-reranker:${imageTag}'
     targetPort: 80
-    cpu: '2.0'
-    memory: rerankerGpu ? '8Gi' : '4Gi'
+    cpu: rerankerGpu ? '2.0' : '4.0'
+    memory: '8Gi'
     workloadProfile: rerankerGpu ? gpuProfile : 'Consumption'
     cooldownSeconds: modelCooldownSeconds
   }
