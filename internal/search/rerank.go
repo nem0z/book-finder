@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -24,7 +25,7 @@ type Reranker interface {
 }
 
 // Rerank re-orders results by the re-ranker's score and keeps the best limit. The re-ranker reads a
-// short card per book: title, authors and the start of the description.
+// short card per book: title, authors, year, pages and the start of the description.
 func Rerank(ctx context.Context, rr Reranker, query string, results []Result, limit int) ([]Result, error) {
 	if len(results) == 0 {
 		return results, nil
@@ -60,6 +61,21 @@ func card(r Result) string {
 	b.WriteString(r.Title)
 	if len(r.Authors) > 0 {
 		b.WriteString(" by " + strings.Join(r.Authors, ", "))
+	}
+
+	// Year and pages help when the query mentions an era or a length. Tags were tried too: they did
+	// not improve the ranking on the test queries.
+	var facts []string
+	if r.Year > 0 {
+		facts = append(facts, strconv.Itoa(r.Year))
+	}
+
+	if r.Pages > 0 {
+		facts = append(facts, strconv.Itoa(r.Pages)+" pages")
+	}
+
+	if len(facts) > 0 {
+		b.WriteString("\n" + strings.Join(facts, ", "))
 	}
 
 	b.WriteString("\n\n" + cut(r.Description, cardDescriptionBytes))
