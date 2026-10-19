@@ -33,6 +33,11 @@ func TestTEI(t *testing.T) {
 		t.Fatalf("scores %v, %v", scores, err)
 	}
 
+	reply = `[{"index":0,"score":0},{"index":1,"score":0}]` // 0 is a valid score
+	if scores, err := tei.Scores(context.Background(), "q", []string{"a", "b"}); err != nil || !slices.Equal(scores, []float64{0, 0}) {
+		t.Errorf("zero scores: %v, %v", scores, err)
+	}
+
 	if got.Query != "q" || !slices.Equal(got.Texts, []string{"a", "b"}) || !got.Truncate {
 		t.Errorf("request: %+v", got)
 	}

@@ -22,7 +22,7 @@ func (f *fakeReranker) Scores(_ context.Context, query string, texts []string) (
 
 func TestRerank(t *testing.T) {
 	results := []Result{
-		{ID: "OL1W", Title: "A", Authors: []string{"X", "Y"}, Description: strings.Repeat("word ", 200)},
+		{ID: "OL1W", Title: "A", Authors: []string{"X", "Y"}, Year: 1938, Pages: 480, Description: strings.Repeat("word ", 200)},
 		{ID: "OL2W", Title: "B", Description: "short"},
 		{ID: "OL3W", Title: "C"},
 	}
@@ -46,7 +46,8 @@ func TestRerank(t *testing.T) {
 		t.Error("the input should not be modified")
 	}
 
-	if rr.query != "q" || !strings.HasPrefix(rr.cards[0], "A by X, Y\n\nword") || len(rr.cards[0]) > len("A by X, Y\n\n")+cardDescriptionBytes {
+	if head := "A by X, Y\n1938, 480 pages\n\n"; rr.query != "q" || !strings.HasPrefix(rr.cards[0], head+"word") ||
+		len(rr.cards[0]) > len(head)+cardDescriptionBytes {
 		t.Errorf("card: %q", rr.cards[0])
 	}
 

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -85,14 +86,18 @@ func scoresInOrder(out []rerankScore, n int) ([]float64, error) {
 		return nil, fmt.Errorf("%w: %d scores for %d texts", ErrBadResponse, len(out), n)
 	}
 
+	// NaN marks a text without a score yet: JSON cannot encode NaN, so no real score is NaN (whereas 0
+	// is possible when the server's sigmoid underflows).
 	scores := make([]float64, n)
-	seen := make([]bool, n)
+	for i := range scores {
+		scores[i] = math.NaN()
+	}
+
 	for _, s := range out {
-		if s.Index < 0 || s.Index >= n || seen[s.Index] {
+		if s.Index < 0 || s.Index >= n || !math.IsNaN(scores[s.Index]) {
 			return nil, fmt.Errorf("%w: bad or repeated index %d", ErrBadResponse, s.Index)
 		}
 
-		seen[s.Index] = true
 		scores[s.Index] = s.Score
 	}
 
