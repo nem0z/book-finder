@@ -30,30 +30,34 @@ func main() {
 	addr := flag.String("addr", envOr("ADDR", "localhost:8080"), "listen address (env ADDR)")
 	url := flag.String("db", envOr("DATABASE_URL", db.DefaultURL), "Postgres connection URL (env DATABASE_URL)")
 	ollama := flag.String("ollama", envOr("OLLAMA_URL", embed.DefaultOllamaURL), "Ollama URL (env OLLAMA_URL)")
-	reranker := flag.String("reranker", envOr("RERANKER_URL", rerank.DefaultURL), "re-ranker URL (env RERANKER_URL)")
+	reranker := flag.String("reranker", envOr("RERANKER_URL", rerank.DefaultURL), "local re-ranker URL, used without VOYAGE_API_KEY (env RERANKER_URL)")
+	voyageModel := flag.String("voyage-model", envOr("VOYAGE_MODEL", rerank.DefaultVoyageModel), "Voyage re-ranker, used when VOYAGE_API_KEY is set (env VOYAGE_MODEL)")
 	noRerank := flag.Bool("no-rerank", false, "rank by vector similarity only")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if err := run(ctx, *addr, *url, *ollama, *reranker, *noRerank); err != nil {
+	var rr search.Reranker
+	rrName := "off"
+	if !*noRerank {
+		rr, rrName = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
+	}
+
+	if err := run(ctx, *addr, *url, *ollama, rr, rrName); err != nil {
 		slog.Error("api failed", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, addr, url, ollama, reranker string, noRerank bool) error {
+func run(ctx context.Context, addr, url, ollama string, rr search.Reranker, rrName string) error {
 	pool, err := db.Connect(ctx, url, nil)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
-	engine := &search.Engine{Pool: pool, Embedder: embed.NewOllama(ollama, embed.DefaultModel)}
-	if !noRerank {
-		engine.Reranker = rerank.NewTEI(reranker)
-	}
+	engine := &search.Engine{Pool: pool, Embedder: embed.NewOllama(ollama, embed.DefaultModel), Reranker: rr}
 
 	srv := &http.Server{
 		Addr:         addr,
@@ -64,7 +68,7 @@ func run(ctx context.Context, addr, url, ollama, reranker string, noRerank bool)
 
 	errs := make(chan error, 1)
 	go func() { errs <- srv.ListenAndServe() }()
-	slog.Info("listening", "addr", addr, "rerank", !noRerank)
+	slog.Info("listening", "addr", addr, "rerank", rrName)
 
 	select {
 	case err := <-errs:

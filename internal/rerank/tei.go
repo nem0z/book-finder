@@ -1,29 +1,14 @@
-// Package rerank re-orders search candidates with a cross-encoder: a model that reads the query and
-// one book together and scores how well they match. It is served locally by Hugging Face Text
-// Embeddings Inference (https://github.com/huggingface/text-embeddings-inference).
 package rerank
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"strings"
-	"time"
 )
 
-const (
-	DefaultURL = "http://localhost:8081"
-
-	requestTimeout = time.Minute
-	maxErrorBody   = 1024
-)
-
-var ErrBadResponse = errors.New("unexpected re-ranker response")
+const DefaultURL = "http://localhost:8081"
 
 // TEI calls the /rerank endpoint of a Text Embeddings Inference server running a re-ranking model.
 type TEI struct {
@@ -49,31 +34,10 @@ func NewTEI(baseURL string) *TEI {
 // Scores returns one relevance score per text, in input order (higher is more relevant). Texts longer
 // than the model's window are truncated by the server.
 func (t *TEI) Scores(ctx context.Context, query string, texts []string) ([]float64, error) {
-	body, err := json.Marshal(rerankRequest{Query: query, Texts: texts, Truncate: true})
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.baseURL+"/rerank", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("re-ranker at %s: %w (is it running?)", t.baseURL, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
-		return nil, fmt.Errorf("%w: %s: %s", ErrBadResponse, resp.Status, strings.TrimSpace(string(msg)))
-	}
-
 	var out []rerankScore
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrBadResponse, err)
+	req := rerankRequest{Query: query, Texts: texts, Truncate: true}
+	if err := postJSON(ctx, t.client, t.baseURL+"/rerank", nil, req, &out); err != nil {
+		return nil, err
 	}
 
 	return scoresInOrder(out, len(texts))
