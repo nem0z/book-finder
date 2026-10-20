@@ -90,6 +90,29 @@ For Docker, put the key in a `.env` file next to `docker-compose.yml` (git-ignor
 VOYAGE_API_KEY=pa-...
 ```
 
+### Query understanding (optional)
+
+With an LLM configured, the search first has it read the query. It pulls out the publication years and page
+counts the query states ("set in modern Amsterdam (2020+)" means first published in 2020 or later; "under 200
+pages"), and rewrites the rest as a short book blurb without the conversational part ("I'm looking for a book
+that..."). The blurb is embedded in place of the query. The extracted filters apply unless the matching `-min-year`/
+`-max-year` or `-min-pages`/`-max-pages` flags are given, and the re-ranker still reads the original query.
+`cmd/search` prints what it searched for. If the LLM fails or takes longer than `-llm-timeout` (default 5s), the
+search goes on with the query as is. `-no-llm` turns it off.
+
+Any OpenAI-compatible chat API with structured outputs works. With Azure OpenAI, in `.env` or the environment:
+
+```sh
+LLM_URL=https://<resource>.openai.azure.com/openai/v1
+LLM_MODEL=<deployment name>
+LLM_API_KEY=...
+```
+
+To try it without a key, the official `ollama/ollama` image can serve a small chat model (`ollama pull
+qwen2.5:3b`), with `LLM_URL=http://localhost:11434/v1` and `LLM_TIMEOUT=60s`. The `ollama` service of
+`docker-compose.yml` only has the embedding model. Small local models follow the instructions less well and take
+5 to 15 s on CPU.
+
 ## API
 
 ```sh
@@ -102,8 +125,8 @@ Or in Docker, with the other services: `docker compose up -d api` (rebuild after
 
 `GET /search?q=<description>` returns the 10 best matches (vector search, then re-ranking) as JSON: title,
 authors, year, pages, full description, tags, cover URL and Open Library link. Flags: `-addr`
-(default `localhost:8080`), `-no-rerank`, and the same `-db`, `-ollama`, `-reranker` and `-voyage-model` as
-`cmd/search`.
+(default `localhost:8080`), `-no-rerank`, and the same `-db`, `-ollama`, `-reranker`, `-voyage-model`, `-llm`,
+`-llm-model` and `-llm-timeout` as `cmd/search`.
 
 ## Web app
 

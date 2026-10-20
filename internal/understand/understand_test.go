@@ -124,6 +124,27 @@ func TestInterpretation(t *testing.T) {
 	}
 }
 
+func TestFromConfig(t *testing.T) {
+	if it, _, err := FromConfig("", "", "", ""); it != nil || err != nil {
+		t.Errorf("off: %v, %v", it, err)
+	}
+
+	if _, _, err := FromConfig("http://llm", "", "", "5s"); !errors.Is(err, ErrNoModel) {
+		t.Errorf("no model: %v", err)
+	}
+
+	for _, bad := range []string{"", "5", "-1s"} {
+		if _, _, err := FromConfig("http://llm", "m", "", bad); err == nil {
+			t.Errorf("timeout %q: no error", bad)
+		}
+	}
+
+	it, d, err := FromConfig("http://llm/", "m", "k", "30s")
+	if c, ok := it.(*Client); !ok || err != nil || d != 30*time.Second || c.baseURL != "http://llm" || c.apiKey != "k" {
+		t.Errorf("got %+v, %v, %v", it, d, err)
+	}
+}
+
 func chatReply(content string) string {
 	b, _ := json.Marshal(content)
 	return `{"choices":[{"index":0,"message":{"role":"assistant","content":` + string(b) + `}}]}`

@@ -17,6 +17,7 @@ import (
 	"github.com/nem0z/book-finder/internal/embed"
 	"github.com/nem0z/book-finder/internal/rerank"
 	"github.com/nem0z/book-finder/internal/search"
+	"github.com/nem0z/book-finder/internal/understand"
 )
 
 const (
@@ -33,31 +34,45 @@ func main() {
 	reranker := flag.String("reranker", envOr("RERANKER_URL", rerank.DefaultURL), "local re-ranker URL, used without VOYAGE_API_KEY (env RERANKER_URL)")
 	voyageModel := flag.String("voyage-model", envOr("VOYAGE_MODEL", rerank.DefaultVoyageModel), "Voyage re-ranker, used when VOYAGE_API_KEY is set (env VOYAGE_MODEL)")
 	noRerank := flag.Bool("no-rerank", false, "rank by vector similarity only")
+	llmURL := flag.String("llm", os.Getenv("LLM_URL"), "OpenAI-compatible API that reads the query first, e.g. https://<resource>.openai.azure.com/openai/v1; empty: off (env LLM_URL, key in LLM_API_KEY)")
+	llmModel := flag.String("llm-model", os.Getenv("LLM_MODEL"), "LLM model, or deployment name on Azure (env LLM_MODEL)")
+	llmTimeout := flag.String("llm-timeout", envOr("LLM_TIMEOUT", search.DefaultInterpretTimeout.String()), "time allowed to the LLM before searching with the query as is (env LLM_TIMEOUT)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	var rr search.Reranker
+	engine := &search.Engine{Embedder: embed.NewOllama(*ollama, embed.DefaultModel)}
 	rrName := "off"
 	if !*noRerank {
-		rr, rrName = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
+		engine.Reranker, rrName = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
 	}
 
-	if err := run(ctx, *addr, *url, *ollama, rr, rrName); err != nil {
+	var err error
+	if engine.Interpreter, engine.InterpretTimeout, err = understand.FromConfig(*llmURL, *llmModel, os.Getenv("LLM_API_KEY"), *llmTimeout); err != nil {
+		slog.Error("bad LLM settings", "err", err)
+		os.Exit(2)
+	}
+
+	llmName := "off"
+	if engine.Interpreter != nil {
+		llmName = *llmModel + " at " + *llmURL
+	}
+
+	if err := run(ctx, *addr, *url, engine, rrName, llmName); err != nil {
 		slog.Error("api failed", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, addr, url, ollama string, rr search.Reranker, rrName string) error {
+func run(ctx context.Context, addr, url string, engine *search.Engine, rrName, llmName string) error {
 	pool, err := db.Connect(ctx, url, nil)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
-	engine := &search.Engine{Pool: pool, Embedder: embed.NewOllama(ollama, embed.DefaultModel), Reranker: rr}
+	engine.Pool = pool
 
 	srv := &http.Server{
 		Addr:         addr,
@@ -68,7 +83,7 @@ func run(ctx context.Context, addr, url, ollama string, rr search.Reranker, rrNa
 
 	errs := make(chan error, 1)
 	go func() { errs <- srv.ListenAndServe() }()
-	slog.Info("listening", "addr", addr, "rerank", rrName)
+	slog.Info("listening", "addr", addr, "rerank", rrName, "llm", llmName)
 
 	select {
 	case err := <-errs:
