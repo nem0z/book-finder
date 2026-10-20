@@ -24,8 +24,9 @@ flowchart LR
   environment. The database has no public address: it lives in its own subnet and is found through a private DNS
   zone.
 - **Re-ranking is done by [Voyage AI](https://docs.voyageai.com/docs/reranker)** (`rerank-3`), so no model app
-  runs for it. With `reranker=cpu` or `gpu`, a `reranker` app serves the local model instead (see
-  [Local re-ranker](#local-re-ranker)).
+  runs for it. Its API key lives in a key vault: you put it there yourself, and the api reads it with its managed
+  identity, so the key never goes through a deployment. With `reranker=cpu` or `gpu`, a `reranker` app serves the
+  local model instead (see [Local re-ranker](#local-re-ranker)).
 - **Images** come from a Basic container registry, pulled with a managed identity (no registry password).
 - **The embedding model is built into the image** (see `deploy/ollama`), so containers that scale from zero don't
   download it.
@@ -53,8 +54,8 @@ region keeps the GPU option open. Prices compared on 2026-10-19 (USD list prices
 
 ## Cost
 
-- **Fixed:** about **$20 a month**: PostgreSQL (~$14), its storage, and the registry (~$5). Apps scaled to zero
-  cost nothing.
+- **Fixed:** about **$20 a month**: PostgreSQL (~$14), its storage, and the registry (~$5). The key vault costs
+  cents (billed per 10,000 reads). Apps scaled to zero cost nothing.
 - **While in use:** Ollama, api and web cost a few cents an hour, billed per second from when they start until they
   scale to zero, and mostly covered by the monthly free allowance (180,000 vCPU-seconds and 360,000 GiB-seconds per
   subscription).
@@ -97,7 +98,6 @@ planned.
 | `deployApps` | `true` | `false` on the first run, before the images are in the registry |
 | `imageTag` | `latest` | |
 | `reranker` | `voyage` | `cpu` or `gpu` run the local model in a `reranker` app instead (see [Local re-ranker](#local-re-ranker)) |
-| `voyageApiKey` | – | Voyage AI API key, needed with `reranker=voyage`; stored as a Container Apps secret |
 | `webApiMinReplicas` | `0` | `1` keeps web and api running |
 | `modelCooldownSeconds` | `1800` | how long ollama and the re-ranker stay up after the last request |
 
@@ -105,13 +105,28 @@ planned.
 
 Needs the [Azure CLI](https://learn.microsoft.com/cli/azure/) (`az login`) and, for the database copy, the local
 Docker stack with a loaded database. The password is chosen once (letters and digits, at least 16) and must be the
-same on every run. The Voyage AI key comes from the [Voyage dashboard](https://dashboard.voyageai.com/api-keys).
+same on every run.
 
 ```powershell
 $env:BOOKFINDER_DB_PASSWORD = '<password>'
-$env:VOYAGE_API_KEY = '<Voyage AI API key>'
 ./deploy/azure/deploy.ps1      # infrastructure, images (built in the registry), apps; prints the URL
 ./deploy/azure/restore-db.ps1  # copies the local database to Azure (about 20 minutes)
+```
+
+The Voyage AI key (from the [Voyage dashboard](https://dashboard.voyageai.com/api-keys)) goes into the key vault
+once. On the first run, `deploy.ps1` creates the vault, then stops and prints this command with the vault's name;
+run it, then `deploy.ps1` again:
+
+```powershell
+$key = Read-Host 'Voyage API key' -AsSecureString   # not shown, not in the history
+az keyvault secret set --vault-name <vault> -n voyage-api-key -o none --value ([Net.NetworkCredential]::new('', $key).Password)
+```
+
+Whoever deploys gets write access to the vault's secrets; the role can take a minute to apply, so retry if `az`
+answers Forbidden. To change the key, run the same command, then restart the api so it reads the new one:
+
+```powershell
+az containerapp revision restart -g bookfinder-rg -n api --revision (az containerapp show -g bookfinder-rg -n api --query properties.latestRevisionName -o tsv)
 ```
 
 - `deploy.ps1` tags the images with the current commit. `-SkipImages` redeploys without rebuilding, and
