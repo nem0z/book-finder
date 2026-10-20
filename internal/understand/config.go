@@ -11,7 +11,8 @@ import (
 var ErrNoModel = errors.New("an LLM URL needs a model (LLM_MODEL)")
 
 // FromConfig returns the interpreter the commands' LLM settings describe, and how long to wait for it.
-// An empty url turns it off: the interpreter is nil and the search embeds queries as they are.
+// An empty url turns it off: the interpreter is nil and the search embeds queries as they are. Without an
+// API key, a container app authenticates with its managed identity (see managedIdentityFromEnv).
 func FromConfig(url, model, apiKey, timeout string) (search.Interpreter, time.Duration, error) {
 	if url == "" {
 		return nil, 0, nil
@@ -26,5 +27,10 @@ func FromConfig(url, model, apiKey, timeout string) (search.Interpreter, time.Du
 		return nil, 0, fmt.Errorf("LLM timeout %q: want a positive duration such as 5s", timeout)
 	}
 
-	return New(url, model, apiKey), d, nil
+	c := New(url, model, apiKey)
+	if mi := managedIdentityFromEnv(); apiKey == "" && mi != nil {
+		c.tokens = mi
+	}
+
+	return c, d, nil
 }

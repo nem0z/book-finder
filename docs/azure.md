@@ -17,6 +17,7 @@ flowchart LR
     api --> db[(PostgreSQL 17<br/>+ pgvector, private)]
   end
   api -->|HTTPS, re-ranking| voyage([Voyage AI API])
+  api -->|HTTPS, reading the query| openai([Azure OpenAI])
   registry[(Container registry)] -.images.-> env
 ```
 
@@ -26,6 +27,11 @@ flowchart LR
 - **Re-ranking is done by [Voyage AI](https://docs.voyageai.com/docs/reranker)** (`rerank-3`), so no model app
   runs for it. With `reranker=cpu` or `gpu`, a `reranker` app serves the local model instead (see
   [Local re-ranker](#local-re-ranker)).
+- **An LLM reads each query first** (see [Query understanding](../README.md#query-understanding-optional)):
+  `gpt-4.1-mini` in an Azure OpenAI account (`<prefix>-ai-<suffix>`) with a Data Zone deployment, so the data
+  stays in the EU. The api authenticates with its managed identity, which has the "Cognitive Services OpenAI User"
+  role on the account: there is no key on Azure. Other LLM features can share the account by adding deployments
+  to `openAIDeployments`.
 - **Images** come from a Basic container registry, pulled with a managed identity (no registry password).
 - **The embedding model is built into the image** (see `deploy/ollama`), so containers that scale from zero don't
   download it.
@@ -60,6 +66,8 @@ region keeps the GPU option open. Prices compared on 2026-10-19 (USD list prices
   subscription).
 - **Voyage AI:** billed per token: the query's tokens times the 30 candidates, plus the candidates' cards. The first
   200 million tokens are free, then `rerank-3` costs $0.05 per million tokens.
+- **Azure OpenAI:** billed per token. A query is read with about 600 input tokens (mostly the instructions) and
+  100 output tokens, about $0.0004 with `gpt-4.1-mini`; an idle account costs nothing.
 - **Local re-ranker instead:** about $0.40 an hour on CPU (4 vCPUs and 8 GiB) or $0.55 on a T4, while it is up.
 
 To pause the database between uses (it restarts automatically after 7 days):
@@ -98,6 +106,8 @@ planned.
 | `imageTag` | `latest` | |
 | `reranker` | `voyage` | `cpu` or `gpu` run the local model in a `reranker` app instead (see [Local re-ranker](#local-re-ranker)) |
 | `voyageApiKey` | – | Voyage AI API key, needed with `reranker=voyage`; stored as a Container Apps secret |
+| `openAIDeployments` | `gpt-4.1-mini` | model deployments of the Azure OpenAI account: name, model, version, sku, capacity (thousands of tokens per minute) |
+| `queryModel` | `gpt-4.1-mini` | deployment that reads search queries; empty to search with the raw query |
 | `webApiMinReplicas` | `0` | `1` keeps web and api running |
 | `modelCooldownSeconds` | `1800` | how long ollama and the re-ranker stay up after the last request |
 

@@ -64,10 +64,18 @@ var (
 type Client struct {
 	baseURL string
 	model   string
-	apiKey  string
+	tokens  tokenSource // nil: no authentication, as for Ollama
 	client  *http.Client
 	now     func() time.Time
 }
+
+// tokenSource returns the bearer token of a request.
+type tokenSource interface {
+	Token(ctx context.Context) (string, error)
+}
+
+// apiKey is a tokenSource that always returns the same key.
+type apiKey string
 
 type chatRequest struct {
 	Model          string         `json:"model"`
@@ -113,16 +121,23 @@ type queryAnswer struct {
 
 // New returns a client for the chat completions API at baseURL (e.g.
 // https://<resource>.openai.azure.com/openai/v1, or http://localhost:11434/v1 for Ollama). model is the
-// model or, on Azure, the deployment name. apiKey is sent as a bearer token when set.
-func New(baseURL, model, apiKey string) *Client {
-	return &Client{
+// model or, on Azure, the deployment name. key is sent as a bearer token when set.
+func New(baseURL, model, key string) *Client {
+	c := &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		model:   model,
-		apiKey:  apiKey,
 		client:  &http.Client{Timeout: requestTimeout},
 		now:     time.Now,
 	}
+
+	if key != "" {
+		c.tokens = apiKey(key)
+	}
+
+	return c
 }
+
+func (k apiKey) Token(context.Context) (string, error) { return string(k), nil }
 
 // Interpret returns the filters query states and a description of the book it asks for. Values the model
 // returns out of range are dropped; an empty description falls back to the query.
@@ -211,8 +226,13 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if c.tokens != nil {
+		token, err := c.tokens.Token(ctx)
+		if err != nil {
+			return err
+		}
+
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := c.client.Do(req)

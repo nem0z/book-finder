@@ -140,8 +140,20 @@ func TestFromConfig(t *testing.T) {
 	}
 
 	it, d, err := FromConfig("http://llm/", "m", "k", "30s")
-	if c, ok := it.(*Client); !ok || err != nil || d != 30*time.Second || c.baseURL != "http://llm" || c.apiKey != "k" {
+	if c, ok := it.(*Client); !ok || err != nil || d != 30*time.Second || c.baseURL != "http://llm" || c.tokens != apiKey("k") {
 		t.Errorf("got %+v, %v, %v", it, d, err)
+	}
+
+	t.Setenv("IDENTITY_ENDPOINT", "http://identity")
+	t.Setenv("IDENTITY_HEADER", "secret")
+	t.Setenv("AZURE_CLIENT_ID", "id")
+	it, _, _ = FromConfig("http://llm", "m", "", "5s")
+	if mi, ok := it.(*Client).tokens.(*managedIdentity); !ok || mi.endpoint != "http://identity" || mi.secret != "secret" || mi.clientID != "id" {
+		t.Errorf("managed identity: %+v", it.(*Client).tokens)
+	}
+
+	if it, _, _ = FromConfig("http://llm", "m", "k", "5s"); it.(*Client).tokens != apiKey("k") {
+		t.Errorf("a key should win over the managed identity: %+v", it.(*Client).tokens)
 	}
 }
 

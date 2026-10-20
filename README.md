@@ -108,6 +108,8 @@ LLM_MODEL=<deployment name>
 LLM_API_KEY=...
 ```
 
+On Azure, the api calls Azure OpenAI with its managed identity instead of a key (see [docs/azure.md](docs/azure.md)).
+
 To try it without a key, the official `ollama/ollama` image can serve a small chat model (`ollama pull
 qwen2.5:3b`), with `LLM_URL=http://localhost:11434/v1` and `LLM_TIMEOUT=60s`. The `ollama` service of
 `docker-compose.yml` only has the embedding model. Small local models follow the instructions less well and take
