@@ -1,6 +1,6 @@
-// Book Finder on Azure: four container apps (web, api, ollama, reranker) in a private network, with a managed
-// PostgreSQL server that has no public address. Only the web app is reachable from the internet.
-// See docs/azure.md.
+// Book Finder on Azure: container apps (web, api, ollama, and the reranker unless Voyage AI re-ranks) in a private
+// network, with a managed PostgreSQL server that has no public address. Only the web app is reachable from the
+// internet. See docs/azure.md.
 
 @description('Azure region; defaults to the resource group\'s (France Central in docs/azure.md). A serverless T4 re-ranker needs a region that offers it.')
 param location string = resourceGroup().location
@@ -20,8 +20,13 @@ param deployApps bool = true
 @description('Tag of the images in the registry.')
 param imageTag string = 'latest'
 
-@description('Run the re-ranker on a serverless NVIDIA T4 instead of CPU. Off by default: the GPU build scores differently from the CPU build used locally (see docs/azure.md).')
-param rerankerGpu bool = false
+@description('Who re-ranks the search results: voyage (Voyage AI\'s API, needs voyageApiKey), or the local model in a reranker app on cpu or on a T4 gpu (the T4 scores differently, see docs/azure.md).')
+@allowed(['voyage', 'cpu', 'gpu'])
+param reranker string = 'voyage'
+
+@description('Voyage AI API key, for reranker=voyage.')
+@secure()
+param voyageApiKey string = ''
 
 @description('Minimum replicas of web and api. 1 keeps them running (a few dollars a month each), 0 lets them stop when idle.')
 @allowed([0, 1])
@@ -34,6 +39,8 @@ var suffix = uniqueString(resourceGroup().id)
 var dbName = 'bookfinder'
 var dbUser = 'bookfinder'
 var gpuProfile = 'gpu-t4'
+var rerankerGpu = reranker == 'gpu'
+var useVoyage = reranker == 'voyage'
 var acrPullRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -184,7 +191,7 @@ module ollama 'app.bicep' = if (deployApps) {
   dependsOn: [registryPull]
 }
 
-module reranker 'app.bicep' = if (deployApps) {
+module rerankerApp 'app.bicep' = if (deployApps && !useVoyage) {
   name: 'app-reranker'
   params: {
     location: location
@@ -215,17 +222,22 @@ module api 'app.bicep' = if (deployApps) {
     cpu: '0.25'
     memory: '0.5Gi'
     minReplicas: webApiMinReplicas
-    secrets: [
-      {
-        name: 'database-url'
-        value: 'postgres://${dbUser}:${postgresPassword}@${postgres.properties.fullyQualifiedDomainName}:5432/${dbName}?sslmode=require'
-      }
-    ]
-    env: [
-      { name: 'DATABASE_URL', secretRef: 'database-url' }
-      { name: 'OLLAMA_URL', value: 'http://ollama' }
-      { name: 'RERANKER_URL', value: 'http://reranker' }
-    ]
+    secrets: concat(
+      [
+        {
+          name: 'database-url'
+          value: 'postgres://${dbUser}:${postgresPassword}@${postgres.properties.fullyQualifiedDomainName}:5432/${dbName}?sslmode=require'
+        }
+      ],
+      useVoyage ? [{ name: 'voyage-api-key', value: voyageApiKey }] : []
+    )
+    env: concat(
+      [
+        { name: 'DATABASE_URL', secretRef: 'database-url' }
+        { name: 'OLLAMA_URL', value: 'http://ollama' }
+      ],
+      useVoyage ? [{ name: 'VOYAGE_API_KEY', secretRef: 'voyage-api-key' }] : [{ name: 'RERANKER_URL', value: 'http://reranker' }]
+    )
   }
   dependsOn: [registryPull, database]
 }
