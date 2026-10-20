@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -39,6 +40,9 @@ The current year is %d.`
 
 var (
 	ErrBadResponse = errors.New("unexpected LLM response")
+
+	// datePattern finds a year (1925, 2020+), a decade (1960s, '60s) or a century (19th).
+	datePattern = regexp.MustCompile(`(?i)\b\d{4}\b|\d0s\b|\b\d{1,2}(st|nd|rd|th)\b`)
 
 	// queryJSONSchema is the structured output the model must return. Strict mode needs every property
 	// required and no others, hence 0 rather than a missing field for "no bound".
@@ -157,11 +161,18 @@ func (c *Client) Interpret(ctx context.Context, query string) (search.Interpreta
 	return a.interpretation(query, c.now().Year()), nil
 }
 
-// interpretation checks the answer: out-of-range or contradictory bounds are dropped.
+// interpretation checks the answer. A filter hides books for good, so it needs grounds in the query: year
+// bounds a year, decade or century ("2020+", "the 60s", "19th century"), page bounds the word "page". Small
+// models invent bounds otherwise. Out-of-range or contradictory bounds are dropped too.
 func (a queryAnswer) interpretation(query string, year int) search.Interpretation {
 	var f search.Filters
-	f.MinYear, f.MaxYear = bounds(a.MinYear, a.MaxYear, year+1)
-	f.MinPages, f.MaxPages = bounds(a.MinPages, a.MaxPages, maxPages)
+	if datePattern.MatchString(query) {
+		f.MinYear, f.MaxYear = bounds(a.MinYear, a.MaxYear, year+1)
+	}
+
+	if strings.Contains(strings.ToLower(query), "page") {
+		f.MinPages, f.MaxPages = bounds(a.MinPages, a.MaxPages, maxPages)
+	}
 
 	desc := strings.TrimSpace(a.Description)
 	if desc == "" {
