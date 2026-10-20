@@ -4,19 +4,22 @@ Deploys Book Finder to Azure: infrastructure, images, then the apps. See docs/az
 
 .DESCRIPTION
 1. Creates or updates the infrastructure (deploy/azure/main.bicep) without the apps.
-2. Builds the four images in the container registry (`az acr build`), so they are not uploaded from this machine.
+2. Builds the images in the container registry (`az acr build`), so they are not uploaded from this machine.
 3. Deploys the apps with those images.
 Safe to run again: Azure only changes what differs.
 
 .EXAMPLE
 $env:BOOKFINDER_DB_PASSWORD = '<letters and digits>'
+$env:VOYAGE_API_KEY = '<Voyage AI API key>'
 ./deploy/azure/deploy.ps1
 #>
 param(
     [string]$ResourceGroup = 'bookfinder-rg',
     [string]$Location = 'francecentral',
-    # Run the re-ranker on a serverless T4 GPU instead of CPU (scores differ from the local CPU build, see docs/azure.md).
-    [bool]$RerankerGpu = $false,
+    # Who re-ranks: Voyage AI's API (needs VOYAGE_API_KEY), or the local model in a reranker app on CPU or on a
+    # serverless T4 GPU (the T4 scores differently, see docs/azure.md).
+    [ValidateSet('voyage', 'cpu', 'gpu')]
+    [string]$Reranker = 'voyage',
     # Image tag: the current commit by default.
     [string]$Tag = (git rev-parse --short HEAD),
     # Redeploy the apps without rebuilding the images (they must exist with this tag).
@@ -39,15 +42,21 @@ if ($password -notmatch '^[A-Za-z0-9]{16,}$') {
     throw 'Set BOOKFINDER_DB_PASSWORD to the database password: at least 16 letters and digits. Keep it: every deployment needs the same one.'
 }
 
-$common = @('-g', $ResourceGroup, '-f', $template, '-p', "postgresPassword=$password", "rerankerGpu=$($RerankerGpu.ToString().ToLower())")
+$voyageKey = $env:VOYAGE_API_KEY
+if ($Reranker -eq 'voyage' -and -not $voyageKey) {
+    throw 'Set VOYAGE_API_KEY to the Voyage AI API key, or pick another -Reranker.'
+}
+
+$common = @('-g', $ResourceGroup, '-f', $template, '-p', "postgresPassword=$password", "reranker=$Reranker", "voyageApiKey=$voyageKey")
 
 Write-Host "Infrastructure in $ResourceGroup ($Location)..."
 Invoke-Az group create -n $ResourceGroup -l $Location -o none
 
-# Switching the re-ranker between GPU and CPU: Azure refuses to change the environment's workload profiles while an
-# app uses one, so the old re-ranker goes first. The apps step below recreates it.
+# Switching re-rankers: the template doesn't remove a reranker app that is no longer needed, and Azure refuses to
+# change the environment's workload profiles while an app uses one, so the old reranker app goes first. The apps
+# step below recreates it when it is still needed.
 $rerankerProfile = az containerapp show -g $ResourceGroup -n reranker --query properties.workloadProfileName -o tsv 2>$null
-$wantedProfile = if ($RerankerGpu) { 'gpu-t4' } else { 'Consumption' }
+$wantedProfile = @{ voyage = ''; cpu = 'Consumption'; gpu = 'gpu-t4' }[$Reranker]
 if ($LASTEXITCODE -eq 0 -and $rerankerProfile -and $rerankerProfile -ne $wantedProfile) {
     Write-Host "Removing the re-ranker from $rerankerProfile..."
     Invoke-Az containerapp delete -g $ResourceGroup -n reranker --yes -o none
@@ -57,12 +66,14 @@ $outputs = Invoke-Az deployment group create -n main @common -p deployApps=false
 $registry = $outputs.registryName.value
 
 if (-not $SkipImages) {
-    $teiTag = if ($RerankerGpu) { 'turing-1.9' } else { 'cpu-1.9' }
     $images = [ordered]@{
-        'bookfinder-api'      = @{ Context = $root; Args = @() }
-        'bookfinder-web'      = @{ Context = "$root/web"; Args = @() }
-        'bookfinder-ollama'   = @{ Context = "$root/deploy/ollama"; Args = @() }
-        'bookfinder-reranker' = @{ Context = "$root/deploy/reranker"; Args = @('--build-arg', "TEI_TAG=$teiTag") }
+        'bookfinder-api'    = @{ Context = $root; Args = @() }
+        'bookfinder-web'    = @{ Context = "$root/web"; Args = @() }
+        'bookfinder-ollama' = @{ Context = "$root/deploy/ollama"; Args = @() }
+    }
+    if ($Reranker -ne 'voyage') {
+        $teiTag = if ($Reranker -eq 'gpu') { 'turing-1.9' } else { 'cpu-1.9' }
+        $images['bookfinder-reranker'] = @{ Context = "$root/deploy/reranker"; Args = @('--build-arg', "TEI_TAG=$teiTag") }
     }
     foreach ($name in $images.Keys) {
         Write-Host "Building $name`:$Tag in $registry..."
