@@ -10,14 +10,13 @@ Safe to run again: Azure only changes what differs.
 
 .EXAMPLE
 $env:BOOKFINDER_DB_PASSWORD = '<letters and digits>'
-$env:VOYAGE_API_KEY = '<Voyage AI API key>'
 ./deploy/azure/deploy.ps1
 #>
 param(
     [string]$ResourceGroup = 'bookfinder-rg',
     [string]$Location = 'francecentral',
-    # Who re-ranks: Voyage AI's API (needs VOYAGE_API_KEY), or the local model in a reranker app on CPU or on a
-    # serverless T4 GPU (the T4 scores differently, see docs/azure.md).
+    # Who re-ranks: Voyage AI's API (its key in the key vault, see docs/azure.md), or the local model in a reranker
+    # app on CPU or on a serverless T4 GPU (the T4 scores differently).
     [ValidateSet('voyage', 'cpu', 'gpu')]
     [string]$Reranker = 'voyage',
     # Image tag: the current commit by default.
@@ -42,12 +41,7 @@ if ($password -notmatch '^[A-Za-z0-9]{16,}$') {
     throw 'Set BOOKFINDER_DB_PASSWORD to the database password: at least 16 letters and digits. Keep it: every deployment needs the same one.'
 }
 
-$voyageKey = $env:VOYAGE_API_KEY
-if ($Reranker -eq 'voyage' -and -not $voyageKey) {
-    throw 'Set VOYAGE_API_KEY to the Voyage AI API key, or pick another -Reranker.'
-}
-
-$common = @('-g', $ResourceGroup, '-f', $template, '-p', "postgresPassword=$password", "reranker=$Reranker", "voyageApiKey=$voyageKey")
+$common = @('-g', $ResourceGroup, '-f', $template, '-p', "postgresPassword=$password", "reranker=$Reranker")
 
 Write-Host "Infrastructure in $ResourceGroup ($Location)..."
 Invoke-Az group create -n $ResourceGroup -l $Location -o none
@@ -64,6 +58,21 @@ if ($LASTEXITCODE -eq 0 -and $rerankerProfile -and $rerankerProfile -ne $wantedP
 
 $outputs = Invoke-Az deployment group create -n main @common -p deployApps=false --query properties.outputs -o json | ConvertFrom-Json
 $registry = $outputs.registryName.value
+
+# The Voyage AI key is not part of the deployment: you put it in the key vault yourself, once.
+if ($Reranker -eq 'voyage') {
+    $vault = $outputs.vaultName.value
+    $secret = $outputs.voyageSecretName.value
+    az keyvault secret show --vault-name $vault -n $secret --query id -o tsv 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw @"
+The Voyage AI key is not in the key vault yet. Put it there (it asks for the key without showing it), then run this
+script again:
+  `$key = Read-Host 'Voyage API key' -AsSecureString
+  az keyvault secret set --vault-name $vault -n $secret -o none --value ([Net.NetworkCredential]::new('', `$key).Password)
+"@
+    }
+}
 
 if (-not $SkipImages) {
     $images = [ordered]@{

@@ -20,13 +20,9 @@ param deployApps bool = true
 @description('Tag of the images in the registry.')
 param imageTag string = 'latest'
 
-@description('Who re-ranks the search results: voyage (Voyage AI\'s API, needs voyageApiKey), or the local model in a reranker app on cpu or on a T4 gpu (the T4 scores differently, see docs/azure.md).')
+@description('Who re-ranks the search results: voyage (Voyage AI\'s API, with the key in the key vault, see docs/azure.md), or the local model in a reranker app on cpu or on a T4 gpu (the T4 scores differently).')
 @allowed(['voyage', 'cpu', 'gpu'])
 param reranker string = 'voyage'
-
-@description('Voyage AI API key, for reranker=voyage.')
-@secure()
-param voyageApiKey string = ''
 
 @description('Minimum replicas of web and api. 1 keeps them running (a few dollars a month each), 0 lets them stop when idle.')
 @allowed([0, 1])
@@ -42,6 +38,9 @@ var gpuProfile = 'gpu-t4'
 var rerankerGpu = reranker == 'gpu'
 var useVoyage = reranker == 'voyage'
 var acrPullRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+var secretsUserRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
+var secretsOfficerRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
+var voyageSecret = 'voyage-api-key'
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: '${prefix}-logs'
@@ -72,6 +71,37 @@ resource registryPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     roleDefinitionId: acrPullRole
     principalId: identity.properties.principalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+// Holds the Voyage AI API key, which you set yourself (docs/azure.md), so it never goes through a deployment. The
+// apps read it with their identity; whoever deploys can write it.
+resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: '${take(prefix, 8)}kv${suffix}'
+  location: location
+  properties: {
+    tenantId: subscription().tenantId
+    sku: { family: 'A', name: 'standard' }
+    enableRbacAuthorization: true
+  }
+}
+
+resource vaultRead 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(vault.id, identity.id, secretsUserRole)
+  scope: vault
+  properties: {
+    roleDefinitionId: secretsUserRole
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource vaultWrite 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(vault.id, deployer().objectId, secretsOfficerRole)
+  scope: vault
+  properties: {
+    roleDefinitionId: secretsOfficerRole
+    principalId: deployer().objectId
   }
 }
 
@@ -229,17 +259,18 @@ module api 'app.bicep' = if (deployApps) {
           value: 'postgres://${dbUser}:${postgresPassword}@${postgres.properties.fullyQualifiedDomainName}:5432/${dbName}?sslmode=require'
         }
       ],
-      useVoyage ? [{ name: 'voyage-api-key', value: voyageApiKey }] : []
+      // The key is read from the vault (the latest version, refreshed by Container Apps).
+      useVoyage ? [{ name: voyageSecret, keyVaultUrl: '${vault.properties.vaultUri}secrets/${voyageSecret}', identity: identity.id }] : []
     )
     env: concat(
       [
         { name: 'DATABASE_URL', secretRef: 'database-url' }
         { name: 'OLLAMA_URL', value: 'http://ollama' }
       ],
-      useVoyage ? [{ name: 'VOYAGE_API_KEY', secretRef: 'voyage-api-key' }] : [{ name: 'RERANKER_URL', value: 'http://reranker' }]
+      useVoyage ? [{ name: 'VOYAGE_API_KEY', secretRef: voyageSecret }] : [{ name: 'RERANKER_URL', value: 'http://reranker' }]
     )
   }
-  dependsOn: [registryPull, database]
+  dependsOn: [registryPull, vaultRead, database]
 }
 
 module web 'app.bicep' = if (deployApps) {
@@ -267,4 +298,6 @@ output registryName string = registry.name
 output registryServer string = registryServer
 output postgresServer string = postgres.name
 output environmentName string = environment.name
+output vaultName string = vault.name
+output voyageSecretName string = voyageSecret
 output url string = deployApps ? 'https://${web!.outputs.fqdn}' : ''
