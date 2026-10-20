@@ -103,8 +103,23 @@ func TestInterpretation(t *testing.T) {
 
 	for _, tt := range tests {
 		tt.a.Description = "d"
-		if got := tt.a.interpretation("q", 2026); got.Filters != tt.want || got.Description != "d" {
+		if got := tt.a.interpretation("from 1960, 100 pages", 2026); got.Filters != tt.want || got.Description != "d" {
 			t.Errorf("%s: got %+v", tt.name, got)
+		}
+	}
+
+	all := queryAnswer{Description: "d", MinYear: 1960, MaxPages: 200}
+	for query, want := range map[string]search.Filters{
+		"set in Victorian London":                  {},
+		"a novel from the 1960s":                   {MinYear: 1960},
+		"something from the '60s":                  {MinYear: 1960},
+		"a 19th-century novel":                     {MinYear: 1960},
+		"modern amsterdam (2020+)":                 {MinYear: 1960},
+		"a short book of 200 Pages or less":        {MaxPages: 200},
+		"under 200 pages, published 1960 or later": {MinYear: 1960, MaxPages: 200},
+	} {
+		if got := all.interpretation(query, 2026); got.Filters != want {
+			t.Errorf("%q: got %+v", query, got.Filters)
 		}
 	}
 }
