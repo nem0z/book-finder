@@ -41,7 +41,7 @@ func main() {
 	var rr search.Reranker
 	rrName := "off"
 	if !*noRerank {
-		rr, rrName = newReranker(*reranker, *voyageModel)
+		rr, rrName = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
 	}
 
 	if err := run(ctx, *addr, *url, *ollama, rr, rrName); err != nil {
@@ -84,16 +84,6 @@ func run(ctx context.Context, addr, url, ollama string, rr search.Reranker, rrNa
 	}
 
 	return nil
-}
-
-// newReranker returns Voyage's re-ranker when VOYAGE_API_KEY is set, else the local one at teiURL, and
-// a name for the logs.
-func newReranker(teiURL, voyageModel string) (search.Reranker, string) {
-	if key := os.Getenv("VOYAGE_API_KEY"); key != "" {
-		return rerank.NewVoyage(key, voyageModel), "voyage " + voyageModel
-	}
-
-	return rerank.NewTEI(teiURL), "tei " + teiURL
 }
 
 func envOr(key, def string) string {

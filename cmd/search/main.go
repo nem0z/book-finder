@@ -50,7 +50,7 @@ func main() {
 
 	var rr search.Reranker
 	if !*noRerank {
-		rr = newReranker(*reranker, *voyageModel)
+		rr, _ = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
 	}
 
 	results, err := run(ctx, *url, *ollama, rr, query, f, *limit, *candidates)
@@ -79,15 +79,6 @@ func run(ctx context.Context, url, ollama string, rr search.Reranker, query stri
 	e := &search.Engine{Pool: pool, Embedder: embed.NewOllama(ollama, embed.DefaultModel), Reranker: rr, Candidates: candidates}
 
 	return e.Search(ctx, query, f, limit)
-}
-
-// newReranker returns Voyage's re-ranker when VOYAGE_API_KEY is set, else the local one at teiURL.
-func newReranker(teiURL, voyageModel string) search.Reranker {
-	if key := os.Getenv("VOYAGE_API_KEY"); key != "" {
-		return rerank.NewVoyage(key, voyageModel)
-	}
-
-	return rerank.NewTEI(teiURL)
 }
 
 func print(results []search.Result) {

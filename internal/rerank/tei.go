@@ -1,27 +1,14 @@
-// Package rerank re-orders search candidates with a cross-encoder: a model that reads the query and
-// one book together and scores how well they match. Two back ends: Voyage AI's hosted re-rankers
-// (https://docs.voyageai.com/docs/reranker), and a local model served by Hugging Face Text Embeddings
-// Inference (https://github.com/huggingface/text-embeddings-inference).
 package rerank
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"net/http"
 	"strings"
-	"time"
 )
 
-const (
-	DefaultURL = "http://localhost:8081"
-
-	requestTimeout = time.Minute
-	maxErrorBody   = 1024
-)
-
-var ErrBadResponse = errors.New("unexpected re-ranker response")
+const DefaultURL = "http://localhost:8081"
 
 // TEI calls the /rerank endpoint of a Text Embeddings Inference server running a re-ranking model.
 type TEI struct {
