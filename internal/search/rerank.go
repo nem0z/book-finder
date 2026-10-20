@@ -19,7 +19,7 @@ const (
 )
 
 // Reranker scores how well each text matches the query, in input order (higher is better).
-// *rerank.TEI implements it.
+// *rerank.Voyage and *rerank.TEI implement it.
 type Reranker interface {
 	Scores(ctx context.Context, query string, texts []string) ([]float64, error)
 }

@@ -22,7 +22,8 @@ settings tuned for bulk loading. Data is kept in the `pgdata` volume; `docker co
 ## The models
 
 Semantic search uses [EmbeddingGemma](https://ai.google.dev/gemma/docs/embeddinggemma), served by Ollama on
-`localhost:11434`, and a re-ranker served by Text Embeddings Inference on `localhost:8081`. Both models are built
+`localhost:11434`, and a re-ranker: Voyage AI's API when `VOYAGE_API_KEY` is set (see [Search](#search)), otherwise a
+local model served by Text Embeddings Inference on `localhost:8081`. Both local models are built
 into their images (`deploy/ollama`, `deploy/reranker`), so the first `docker compose up -d` builds them, downloading
 about 2 GB once; nothing is downloaded when a container starts.
 
@@ -77,8 +78,17 @@ that reads the query and each book together, and prints the best 10 (`-n`). Opti
 publication year, page count and original language; `-json` for machine-readable output. Only works with a
 vector are searched.
 
-The re-ranker (`gte-reranker-modernbert-base`) runs in the `reranker` service of `docker-compose.yml`. On a
-16-core CPU it adds about 3 s per search; `-no-rerank` skips it and ranks by vector similarity only.
+The re-ranker is [Voyage AI](https://docs.voyageai.com/docs/reranker)'s `rerank-3` when `VOYAGE_API_KEY` is set
+(`-voyage-model` or `VOYAGE_MODEL` to change the model), as on Azure. Without a key, it is the local
+`gte-reranker-modernbert-base` in the `reranker` service of `docker-compose.yml` (`-reranker` or `RERANKER_URL`),
+which adds about 3 s per search on a 16-core CPU. `-no-rerank` skips re-ranking and ranks by vector similarity
+only.
+
+For Docker, put the key in a `.env` file next to `docker-compose.yml` (git-ignored):
+
+```sh
+VOYAGE_API_KEY=pa-...
+```
 
 ## API
 
@@ -92,7 +102,8 @@ Or in Docker, with the other services: `docker compose up -d api` (rebuild after
 
 `GET /search?q=<description>` returns the 10 best matches (vector search, then re-ranking) as JSON: title,
 authors, year, pages, full description, tags, cover URL and Open Library link. Flags: `-addr`
-(default `localhost:8080`), `-no-rerank`, and the same `-db`, `-ollama` and `-reranker` as `cmd/search`.
+(default `localhost:8080`), `-no-rerank`, and the same `-db`, `-ollama`, `-reranker` and `-voyage-model` as
+`cmd/search`.
 
 ## Web app
 

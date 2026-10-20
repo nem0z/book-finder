@@ -24,7 +24,8 @@ const excerptBytes = 220
 func main() {
 	url := flag.String("db", envOr("DATABASE_URL", db.DefaultURL), "Postgres connection URL (env DATABASE_URL)")
 	ollama := flag.String("ollama", envOr("OLLAMA_URL", embed.DefaultOllamaURL), "Ollama URL (env OLLAMA_URL)")
-	reranker := flag.String("reranker", envOr("RERANKER_URL", rerank.DefaultURL), "re-ranker URL (env RERANKER_URL)")
+	reranker := flag.String("reranker", envOr("RERANKER_URL", rerank.DefaultURL), "local re-ranker URL, used without VOYAGE_API_KEY (env RERANKER_URL)")
+	voyageModel := flag.String("voyage-model", envOr("VOYAGE_MODEL", rerank.DefaultVoyageModel), "Voyage re-ranker, used when VOYAGE_API_KEY is set (env VOYAGE_MODEL)")
 	noRerank := flag.Bool("no-rerank", false, "rank by vector similarity only")
 	candidates := flag.Int("candidates", search.DefaultCandidates, "vector results passed to the re-ranker")
 	limit := flag.Int("n", search.DefaultLimit, "number of results")
@@ -49,7 +50,7 @@ func main() {
 
 	var rr search.Reranker
 	if !*noRerank {
-		rr = rerank.NewTEI(*reranker)
+		rr = newReranker(*reranker, *voyageModel)
 	}
 
 	results, err := run(ctx, *url, *ollama, rr, query, f, *limit, *candidates)
@@ -78,6 +79,15 @@ func run(ctx context.Context, url, ollama string, rr search.Reranker, query stri
 	e := &search.Engine{Pool: pool, Embedder: embed.NewOllama(ollama, embed.DefaultModel), Reranker: rr, Candidates: candidates}
 
 	return e.Search(ctx, query, f, limit)
+}
+
+// newReranker returns Voyage's re-ranker when VOYAGE_API_KEY is set, else the local one at teiURL.
+func newReranker(teiURL, voyageModel string) search.Reranker {
+	if key := os.Getenv("VOYAGE_API_KEY"); key != "" {
+		return rerank.NewVoyage(key, voyageModel)
+	}
+
+	return rerank.NewTEI(teiURL)
 }
 
 func print(results []search.Result) {
