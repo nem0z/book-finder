@@ -58,3 +58,10 @@ jobs:
         run: docker build -t book-finder-api .
       - name: build the web image
         run: docker build -t book-finder-web web
+
+  bicep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build the Azure templates
+        run: az bicep build --file deploy/azure/main.bicep --stdout > /dev/null
