@@ -15,8 +15,10 @@ import (
 
 	"github.com/nem0z/book-finder/internal/db"
 	"github.com/nem0z/book-finder/internal/embed"
+	"github.com/nem0z/book-finder/internal/llm"
 	"github.com/nem0z/book-finder/internal/rerank"
 	"github.com/nem0z/book-finder/internal/search"
+	"github.com/nem0z/book-finder/internal/understand"
 )
 
 const excerptBytes = 220
@@ -27,6 +29,11 @@ func main() {
 	reranker := flag.String("reranker", envOr("RERANKER_URL", rerank.DefaultURL), "local re-ranker URL, used without VOYAGE_API_KEY (env RERANKER_URL)")
 	voyageModel := flag.String("voyage-model", envOr("VOYAGE_MODEL", rerank.DefaultVoyageModel), "Voyage re-ranker, used when VOYAGE_API_KEY is set (env VOYAGE_MODEL)")
 	noRerank := flag.Bool("no-rerank", false, "keep the retrieval order")
+	llmProvider := flag.String("llm", os.Getenv("LLM_PROVIDER"), "LLM that reads the query first: azure, ollama or copilot; empty: off (env LLM_PROVIDER, key in LLM_API_KEY)")
+	llmURL := flag.String("llm-url", os.Getenv("LLM_URL"), "LLM API URL, for azure and ollama (env LLM_URL)")
+	llmModel := flag.String("llm-model", os.Getenv("LLM_MODEL"), "LLM model, or deployment name on Azure (env LLM_MODEL)")
+	llmTimeout := flag.String("llm-timeout", envOr("LLM_TIMEOUT", search.DefaultInterpretTimeout.String()), "time allowed to the LLM before searching with the query as is (env LLM_TIMEOUT)")
+	noLLM := flag.Bool("no-llm", false, "search with the query as is")
 	candidates := flag.Int("candidates", search.DefaultCandidates, "retrieved works passed to the re-ranker")
 	limit := flag.Int("n", search.DefaultLimit, "number of results")
 	asJSON := flag.Bool("json", false, "print the results as JSON")
@@ -53,7 +60,21 @@ func main() {
 		rr, _ = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
 	}
 
-	results, err := run(ctx, *url, *ollama, rr, query, f, *limit, *candidates)
+	e := search.Engine{Embedder: embed.NewOllama(*ollama, embed.DefaultModel), Reranker: rr, Candidates: *candidates}
+	if !*noLLM {
+		it, timeout, err := understand.FromConfig(llm.Config{Provider: *llmProvider, URL: *llmURL, Model: *llmModel, APIKey: os.Getenv("LLM_API_KEY")}, *llmTimeout)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		defer it.Close() //nolint:errcheck // exiting
+
+		if it != nil {
+			e.Interpreter, e.InterpretTimeout = it, timeout
+		}
+	}
+
+	results, in, err := run(ctx, *url, &e, query, f, *limit)
 	if err != nil {
 		slog.Error("search failed", "err", err)
 		os.Exit(1)
@@ -65,21 +86,51 @@ func main() {
 		return
 	}
 
+	if e.Interpreter != nil {
+		printInterpretation(in)
+	}
+
 	print(results)
 }
 
-// run finds the books whose keyword vector is nearest to the query's, then re-orders the best of them with rr,
-// when it is set.
-func run(ctx context.Context, url, ollama string, rr search.Reranker, query string, f search.Filters, limit, candidates int) ([]search.Result, error) {
+// run finds the books whose keyword vector is nearest to what e searches for, then re-orders the best of them
+// when e has a re-ranker.
+func run(ctx context.Context, url string, e *search.Engine, query string, f search.Filters, limit int) ([]search.Result, search.Interpretation, error) {
 	pool, err := db.Connect(ctx, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, search.Interpretation{}, err
 	}
 	defer pool.Close()
 
-	e := &search.Engine{Pool: pool, Embedder: embed.NewOllama(ollama, embed.DefaultModel), Reranker: rr, Candidates: candidates}
+	e.Pool = pool
 
-	return e.Search(ctx, query, f, limit)
+	return e.SearchInterpreted(ctx, query, f, limit)
+}
+
+// printInterpretation shows what the search embedded and the filters it applied.
+func printInterpretation(in search.Interpretation) {
+	fmt.Printf("Searched for: %s\n", in.Description)
+
+	var filters []string
+	f := in.Filters
+	for _, b := range []struct {
+		name string
+		v    int
+	}{{"min-year", f.MinYear}, {"max-year", f.MaxYear}, {"min-pages", f.MinPages}, {"max-pages", f.MaxPages}} {
+		if b.v != 0 {
+			filters = append(filters, fmt.Sprintf("%s %d", b.name, b.v))
+		}
+	}
+
+	if f.OriginalLanguage != "" {
+		filters = append(filters, "lang "+f.OriginalLanguage)
+	}
+
+	if len(filters) > 0 {
+		fmt.Printf("Filters: %s\n", strings.Join(filters, ", "))
+	}
+
+	fmt.Println()
 }
 
 func print(results []search.Result) {

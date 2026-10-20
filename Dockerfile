@@ -1,13 +1,16 @@
-# API image: build a static binary, then run it on a minimal image with no shell, as a non-root user.
+# API image: build the binary, with the Copilot runtime built in for LLM_PROVIDER=copilot, then run it on a
+# minimal image with no shell, as a non-root user.
 FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
+RUN go tool bundler -platform linux/amd64 -output cmd/api
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
 
-FROM gcr.io/distroless/static-debian12:nonroot
+# The Copilot runtime needs the C and C++ runtime libraries.
+FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=build /out/api /api
 EXPOSE 8080
 ENV ADDR=:8080
