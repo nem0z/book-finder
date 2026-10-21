@@ -17,6 +17,7 @@ flowchart LR
     api --> db[(PostgreSQL 17<br/>+ pgvector, private)]
   end
   api -->|HTTPS, re-ranking| voyage([Voyage AI API])
+  api -->|HTTPS, reading the query| copilot([GitHub Copilot])
   registry[(Container registry)] -.images.-> env
 ```
 
@@ -24,8 +25,13 @@ flowchart LR
   environment. The database has no public address: it lives in its own subnet and is found through a private DNS
   zone.
 - **Re-ranking is done by [Voyage AI](https://docs.voyageai.com/docs/reranker)** (`rerank-3`), so no model app
-  runs for it. With `reranker=cpu` or `gpu`, a `reranker` app serves the local model instead (see
-  [Local re-ranker](#local-re-ranker)).
+  runs for it. Its API key lives in a key vault: you put it there yourself, and the api reads it with its managed
+  identity, so the key never goes through a deployment. With `reranker=cpu` or `gpu`, a `reranker` app serves the
+  local model instead (see [Local re-ranker](#local-re-ranker)).
+- **A GitHub Copilot model reads each query first** (`claude-haiku-5.5`, see
+  [Query understanding](../README.md#query-understanding-optional)), through the Copilot runtime built into the api
+  image. It is billed to the AI credits of the GitHub account whose token is in the key vault, next to the Voyage
+  key. `queryModel=''` turns it off.
 - **Images** come from a Basic container registry, pulled with a managed identity (no registry password).
 - **The embedding model is built into the image** (see `deploy/ollama`), so containers that scale from zero don't
   download it.
@@ -33,7 +39,7 @@ flowchart LR
 | Resource | Size | Scales |
 |---|---|---|
 | `web` | 0.25 vCPU, 0.5 GiB | to zero, unless `webApiMinReplicas=1` |
-| `api` | 0.25 vCPU, 0.5 GiB | to zero, unless `webApiMinReplicas=1` |
+| `api` | 0.5 vCPU, 1 GiB (0.25 vCPU, 0.5 GiB with `queryModel=''`) | to zero, unless `webApiMinReplicas=1` |
 | `ollama` | 1 vCPU, 2 GiB | to zero after `modelCooldownSeconds` (30 min) |
 | `reranker` (only with `reranker=cpu` or `gpu`) | 4 vCPU, 8 GiB, or a T4 GPU with 2 vCPU, 8 GiB | to zero after `modelCooldownSeconds` (30 min) |
 | PostgreSQL | Flexible Server B1ms (1 vCore, 2 GiB), 32 GB, 7 days of backups | always on (can be stopped, see below) |
@@ -53,13 +59,15 @@ region keeps the GPU option open. Prices compared on 2026-10-19 (USD list prices
 
 ## Cost
 
-- **Fixed:** about **$20 a month**: PostgreSQL (~$14), its storage, and the registry (~$5). Apps scaled to zero
-  cost nothing.
+- **Fixed:** about **$20 a month**: PostgreSQL (~$14), its storage, and the registry (~$5). The key vault costs
+  cents (billed per 10,000 reads). Apps scaled to zero cost nothing.
 - **While in use:** Ollama, api and web cost a few cents an hour, billed per second from when they start until they
   scale to zero, and mostly covered by the monthly free allowance (180,000 vCPU-seconds and 360,000 GiB-seconds per
   subscription).
 - **Voyage AI:** billed per token: the query's tokens times the 30 candidates, plus the candidates' cards. The first
   200 million tokens are free, then `rerank-3` costs $0.05 per million tokens.
+- **GitHub Copilot:** billed per token to the GitHub account's AI credits. A query is read with about 560 input
+  and 70 to 150 output tokens with `claude-haiku-5.5`.
 - **Local re-ranker instead:** about $0.40 an hour on CPU (4 vCPUs and 8 GiB) or $0.55 on a T4, while it is up.
 
 To pause the database between uses (it restarts automatically after 7 days):
@@ -97,7 +105,7 @@ planned.
 | `deployApps` | `true` | `false` on the first run, before the images are in the registry |
 | `imageTag` | `latest` | |
 | `reranker` | `voyage` | `cpu` or `gpu` run the local model in a `reranker` app instead (see [Local re-ranker](#local-re-ranker)) |
-| `voyageApiKey` | – | Voyage AI API key, needed with `reranker=voyage`; stored as a Container Apps secret |
+| `queryModel` | `claude-haiku-5.5` | Copilot model that reads search queries; empty to search with the raw query |
 | `webApiMinReplicas` | `0` | `1` keeps web and api running |
 | `modelCooldownSeconds` | `1800` | how long ollama and the re-ranker stay up after the last request |
 
@@ -105,13 +113,34 @@ planned.
 
 Needs the [Azure CLI](https://learn.microsoft.com/cli/azure/) (`az login`) and, for the database copy, the local
 Docker stack with a loaded database. The password is chosen once (letters and digits, at least 16) and must be the
-same on every run. The Voyage AI key comes from the [Voyage dashboard](https://dashboard.voyageai.com/api-keys).
+same on every run.
 
 ```powershell
 $env:BOOKFINDER_DB_PASSWORD = '<password>'
-$env:VOYAGE_API_KEY = '<Voyage AI API key>'
 ./deploy/azure/deploy.ps1      # infrastructure, images (built in the registry), apps; prints the URL
 ./deploy/azure/restore-db.ps1  # copies the local database to Azure (about 20 minutes)
+```
+
+The Voyage AI key (from the [Voyage dashboard](https://dashboard.voyageai.com/api-keys)) and a GitHub token for
+Copilot go into the key vault once. On the first run, `deploy.ps1` creates the vault, then stops and prints the
+command for each missing secret with the vault's name; run it, then `deploy.ps1` again:
+
+```powershell
+$key = Read-Host 'Voyage API key' -AsSecureString   # not shown, not in the history
+az keyvault secret set --vault-name <vault> -n voyage-api-key -o none --value ([Net.NetworkCredential]::new('', $key).Password)
+$key = Read-Host 'GitHub token for Copilot' -AsSecureString
+az keyvault secret set --vault-name <vault> -n copilot-github-token -o none --value ([Net.NetworkCredential]::new('', $key).Password)
+```
+
+The GitHub token is a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new)
+(`github_pat_...`) of the account whose Copilot AI credits pay for the queries, with the "Copilot Requests"
+permission. Classic tokens (`ghp_`) don't work with Copilot. `-QueryModel ''` deploys without it.
+
+Whoever deploys gets write access to the vault's secrets; the role can take a minute to apply, so retry if `az`
+answers Forbidden. To change a secret, run the same command, then restart the api so it reads the new one:
+
+```powershell
+az containerapp revision restart -g bookfinder-rg -n api --revision (az containerapp show -g bookfinder-rg -n api --query properties.latestRevisionName -o tsv)
 ```
 
 - `deploy.ps1` tags the images with the current commit. `-SkipImages` redeploys without rebuilding, and
