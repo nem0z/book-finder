@@ -8,3 +8,6 @@
 
 # Local secrets (docker compose reads .env)
 .env
+
+# Copilot runtime built into the commands by `go tool bundler` (see README)
+cmd/*/zcopilot*
