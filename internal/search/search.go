@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nem0z/book-finder/internal/embed"
@@ -71,8 +72,9 @@ type Result struct {
 	Tags             []string `json:"tags"`               // genres then subjects, without generic ones
 	CoverID          int64    `json:"cover_id,omitempty"` // Open Library cover ID
 	RatingCount      int      `json:"rating_count"`
-	Similarity       float64  `json:"similarity"`             // cosine similarity, 1 = same direction
-	RerankScore      float64  `json:"rerank_score,omitempty"` // set by Rerank; higher is more relevant
+	Similarity       float64  `json:"similarity"`              // cosine similarity, 1 = same direction; set by Semantic
+	LexicalScore     float64  `json:"lexical_score,omitempty"` // BM25 score; set by Keywords and FullText
+	RerankScore      float64  `json:"rerank_score,omitempty"`  // set by Rerank; higher is more relevant
 }
 
 // Semantic returns up to limit works whose vector is closest to the query's and that match f.
@@ -107,13 +109,18 @@ func Semantic(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query 
 	}
 	defer rows.Close()
 
+	return scanResults(rows, func(r *Result) *float64 { return &r.Similarity })
+}
+
+// scanResults reads result rows: the work's columns, then its score, stored where score points.
+func scanResults(rows pgx.Rows, score func(*Result) *float64) ([]Result, error) {
 	var out []Result
 	for rows.Next() {
 		var r Result
 		var year, pages int16
 		var genres, subjects []string
 		if err := rows.Scan(&r.ID, &r.Title, &r.Authors, &year, &pages, &r.OriginalLanguage, &r.Description,
-			&genres, &subjects, &r.CoverID, &r.RatingCount, &r.Similarity); err != nil {
+			&genres, &subjects, &r.CoverID, &r.RatingCount, score(&r)); err != nil {
 			return nil, err
 		}
 
