@@ -42,6 +42,7 @@ with a page count, then an ISBN-13, then a cover; ties go to the most recent edi
 | Popularity ordering | B-tree on `want_to_read + currently_reading + already_read + rating_count` |
 | Joins / lookups | `work_authors(author_id)`, `works(isbn_13)` |
 | Semantic search | HNSW (cosine) on `work_embeddings.embedding` |
+| Keyword search on LLM keywords | GIN on `work_keywords.keywords_tsv` |
 
 `work_embeddings` has no foreign key to `works` and its index is not rebuilt by the loader: vectors take hours to
 compute, so they survive catalogue reloads, and only works whose embedded text changed are computed again.

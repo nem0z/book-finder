@@ -81,8 +81,15 @@ vector are searched.
 The re-ranker is [Voyage AI](https://docs.voyageai.com/docs/reranker)'s `rerank-3` when `VOYAGE_API_KEY` is set
 (`-voyage-model` or `VOYAGE_MODEL` to change the model), as on Azure. Without a key, it is the local
 `gte-reranker-modernbert-base` in the `reranker` service of `docker-compose.yml` (`-reranker` or `RERANKER_URL`),
-which adds about 3 s per search on a 16-core CPU. `-no-rerank` skips re-ranking and ranks by vector similarity
-only.
+which adds about 3 s per search on a 16-core CPU. `-no-rerank` skips re-ranking and keeps the retrieval order.
+
+`-retrieval` chooses how candidates are found, before re-ranking:
+- `vector` (default): the nearest vectors.
+- `keywords`: the works whose LLM keywords (`work_keywords`) best match the query's words.
+- `fulltext`: the same keyword match on the title, authors, subjects and description.
+
+Keyword retrieval ranks with BM25, so rare words count more than common ones. It only searches works with a vector,
+so all three cover the same catalogue. For keyword retrieval, re-rank more candidates, e.g. `-candidates 100`.
 
 For Docker, put the key in a `.env` file next to `docker-compose.yml` (git-ignored):
 
