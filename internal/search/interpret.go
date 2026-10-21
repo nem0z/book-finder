@@ -9,7 +9,7 @@ type Interpretation struct {
 	Description string
 }
 
-// Interpreter reads a search query. *understand.Client implements it with an LLM.
+// Interpreter reads a search query. *understand.Interpreter implements it with an LLM.
 type Interpreter interface {
 	Interpret(ctx context.Context, query string) (Interpretation, error)
 }

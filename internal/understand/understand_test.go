@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -13,76 +11,50 @@ import (
 	"github.com/nem0z/book-finder/internal/search"
 )
 
+// fakeLLM answers every request with reply, and remembers the last request.
+type fakeLLM struct {
+	reply              string
+	err                error
+	system, user, name string
+	schema             json.RawMessage
+}
+
+func (f *fakeLLM) JSON(_ context.Context, system, user, schemaName string, schema json.RawMessage, out any) error {
+	f.system, f.user, f.name, f.schema = system, user, schemaName, schema
+	if f.err != nil {
+		return f.err
+	}
+
+	return json.Unmarshal([]byte(f.reply), out)
+}
+
 func TestInterpret(t *testing.T) {
-	var got chatRequest
-	var auth string
-	status := http.StatusOK
-	reply := chatReply(`{"description":"An expat settles in Amsterdam.","min_year":2020,"max_year":0,"min_pages":0,"max_pages":300}`)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
-			http.NotFound(w, r)
-			return
-		}
+	f := &fakeLLM{reply: `{"description":" An expat settles in Amsterdam. ","min_year":2020,"max_year":0,"min_pages":0,"max_pages":300}`}
+	in := New(f)
+	in.now = func() time.Time { return time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC) }
 
-		auth = r.Header.Get("Authorization")
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Error(err)
-		}
-
-		w.WriteHeader(status)
-		w.Write([]byte(reply)) //nolint:errcheck
-	}))
-	defer srv.Close()
-
-	c := New(srv.URL+"/v1/", "m", "key")
-	c.now = func() time.Time { return time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC) }
-	in, err := c.Interpret(context.Background(), "a book about an expat in amsterdam (2020+), under 300 pages")
+	query := "a book about an expat in amsterdam (2020+), under 300 pages"
+	got, err := in.Interpret(context.Background(), query)
 	want := search.Interpretation{
 		Filters:     search.Filters{MinYear: 2020, MaxPages: 300},
 		Description: "An expat settles in Amsterdam.",
 	}
-	if err != nil || in != want {
-		t.Fatalf("got %+v, %v", in, err)
+	if err != nil || got != want {
+		t.Fatalf("got %+v, %v", got, err)
 	}
 
-	if auth != "Bearer key" || got.Model != "m" || len(got.Messages) != 2 || got.Messages[1].Content != "a book about an expat in amsterdam (2020+), under 300 pages" {
-		t.Errorf("request: %q %+v", auth, got)
+	if f.user != query || f.name != schemaName || !json.Valid(f.schema) || !strings.Contains(f.system, "The current year is 2026.") {
+		t.Errorf("request: %q %q %s\n%s", f.user, f.name, f.schema, f.system)
 	}
 
-	if !strings.Contains(got.Messages[0].Content, "The current year is 2026.") {
-		t.Errorf("system prompt without the year: %s", got.Messages[0].Content)
+	f.reply = `{"description":"","min_year":0,"max_year":0,"min_pages":0,"max_pages":0}`
+	if got, err := in.Interpret(context.Background(), "a man wakes up as an insect"); err != nil || got.Description != "a man wakes up as an insect" {
+		t.Errorf("empty description: %+v, %v", got, err)
 	}
 
-	if f := got.ResponseFormat; f.Type != "json_schema" || !f.JSONSchema.Strict || !json.Valid(f.JSONSchema.Schema) {
-		t.Errorf("response format: %+v", f)
-	}
-
-	for _, bad := range []string{`{"choices":[]}`, chatReply(`not json`), `{"choices":[{"message":{"content":"","refusal":"no"}}]}`, `not json`} {
-		reply = bad
-		if _, err := c.Interpret(context.Background(), "q"); !errors.Is(err, ErrBadResponse) {
-			t.Errorf("%s: got %v", bad, err)
-		}
-	}
-
-	status, reply = http.StatusUnauthorized, `{"error":{"message":"invalid key"}}`
-	if _, err := c.Interpret(context.Background(), "q"); !errors.Is(err, ErrBadResponse) || !strings.Contains(err.Error(), "invalid key") {
-		t.Errorf("401: %v", err)
-	}
-}
-
-func TestInterpretNoKey(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a := r.Header.Get("Authorization"); a != "" {
-			t.Errorf("Authorization %q without a key", a)
-		}
-
-		w.Write([]byte(chatReply(`{"description":"","min_year":0,"max_year":0,"min_pages":0,"max_pages":0}`))) //nolint:errcheck
-	}))
-	defer srv.Close()
-
-	in, err := New(srv.URL, "m", "").Interpret(context.Background(), "a man wakes up as an insect")
-	if err != nil || in != (search.Interpretation{Description: "a man wakes up as an insect"}) {
-		t.Errorf("got %+v, %v", in, err)
+	f.err = errors.New("down")
+	if _, err := in.Interpret(context.Background(), "q"); !errors.Is(err, f.err) {
+		t.Errorf("LLM error: %v", err)
 	}
 }
 
@@ -122,9 +94,4 @@ func TestInterpretation(t *testing.T) {
 			t.Errorf("%q: got %+v", query, got.Filters)
 		}
 	}
-}
-
-func chatReply(content string) string {
-	b, _ := json.Marshal(content)
-	return `{"choices":[{"index":0,"message":{"role":"assistant","content":` + string(b) + `}}]}`
 }
