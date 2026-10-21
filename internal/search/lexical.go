@@ -46,7 +46,7 @@ func lexical(ctx context.Context, pool *pgxpool.Pool, sql, query string, f Filte
 		limit = DefaultLimit
 	}
 
-	rows, err := pool.Query(ctx, sql, query, f.MinYear, f.MaxYear, f.MinPages, f.MaxPages, f.OriginalLanguage, limit)
+	rows, err := pool.Query(ctx, sql, query, f.MinYear, f.MaxYear, f.MinPages, f.MaxPages, f.OriginalLanguage, limit, f.ids())
 	if err != nil {
 		return nil, fmt.Errorf("keyword search: %w", err)
 	}
@@ -55,10 +55,11 @@ func lexical(ctx context.Context, pool *pgxpool.Pool, sql, query string, f Filte
 	return scanResults(rows, func(r *Result) *float64 { return &r.LexicalScore })
 }
 
-// lexicalSQL returns the $7 works of s that best match the words of the $1 query, with BM25 (k1 = 1.2,
-// b = 0.75) for a term frequency of 1: a work scores the sum of the IDF of the query's lexemes it
-// contains, times 2.2 / (1.3 + 0.9 × its lexeme count / the mean count). Postgres's ts_rank has no IDF,
-// so common words ("man", "young") would outweigh rare ones. Stop words are dropped by to_tsvector.
+// lexicalSQL returns the $7 works of s (among the $8 works, when not NULL) that best match the words of the
+// $1 query, with BM25 (k1 = 1.2, b = 0.75) for a term frequency of 1: a work scores the sum of the IDF of
+// the query's lexemes it contains, times 2.2 / (1.3 + 0.9 × its lexeme count / the mean count). Postgres's
+// ts_rank has no IDF, so common words ("man", "young") would outweigh rare ones. Stop words are dropped by
+// to_tsvector.
 func lexicalSQL(s lexicalSource) string {
 	return fmt.Sprintf(`
 WITH stats AS MATERIALIZED (
@@ -82,6 +83,7 @@ best AS MATERIALIZED (
       AND ($4 = 0 OR w.page_count >= $4)
       AND ($5 = 0 OR w.page_count <= $5)
       AND ($6 = '' OR w.original_language = $6)
+      AND ($8::text[] IS NULL OR w.id = ANY($8))
     GROUP BY w.id, length(%[4]s), s.avgdl
     ORDER BY score DESC, w.rating_count DESC, w.id
     LIMIT $7

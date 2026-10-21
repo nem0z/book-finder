@@ -109,6 +109,10 @@ func TestSemantic(t *testing.T) {
 		t.Errorf("year and language: %v", got)
 	}
 
+	if got := ids(Filters{IDs: []string{"OL3W", "OL2W", "OL4W"}}, 0); !slices.Equal(got, []string{"OL2W", "OL3W"}) {
+		t.Errorf("ids: %v", got)
+	}
+
 	res, err := Semantic(ctx, pool, fakeQuery{"fake"}, "a query", Filters{}, 1)
 	if err != nil || len(res) != 1 || !slices.Equal(res[0].Tags, []string{"Thriller", "Oslo"}) || res[0].CoverID != 7 {
 		t.Errorf("tags and cover: %+v, %v", res, err)

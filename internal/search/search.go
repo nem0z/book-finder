@@ -21,9 +21,9 @@ const (
 	efSearch = 200
 )
 
-// semanticSQL returns the $8 works nearest to the $1 vector computed by model $2. Filters are applied
-// while walking the HNSW index (pgvector iterative scans), so strict filters still return up to $8
-// results. relaxed_order may return rows slightly out of order, hence the outer sort.
+// semanticSQL returns the $8 works nearest to the $1 vector computed by model $2 (among the $9 works, when
+// not NULL). Filters are applied while walking the HNSW index (pgvector iterative scans), so strict filters
+// still return up to $8 results. relaxed_order may return rows slightly out of order, hence the outer sort.
 const semanticSQL = `
 WITH nearest AS MATERIALIZED (
     SELECT w.id, w.title, w.author_names, coalesce(w.first_publish_year, 0) AS year,
@@ -38,6 +38,7 @@ WITH nearest AS MATERIALIZED (
       AND ($5 = 0 OR w.page_count >= $5)
       AND ($6 = 0 OR w.page_count <= $6)
       AND ($7 = '' OR w.original_language = $7)
+      AND ($9::text[] IS NULL OR w.id = ANY($9))
     ORDER BY e.embedding <=> $1::halfvec
     LIMIT $8
 )
@@ -59,6 +60,8 @@ type Filters struct {
 	MinYear, MaxYear   int
 	MinPages, MaxPages int
 	OriginalLanguage   string // MARC code, e.g. "eng", "jpn"
+	// IDs restricts the search to these works, e.g. the sample a benchmark runs on.
+	IDs []string
 }
 
 type Result struct {
@@ -103,13 +106,22 @@ func Semantic(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query 
 	}
 
 	rows, err := tx.Query(ctx, semanticSQL, embed.VectorLiteral(vec), emb.Model(), f.MinYear, f.MaxYear,
-		f.MinPages, f.MaxPages, f.OriginalLanguage, limit)
+		f.MinPages, f.MaxPages, f.OriginalLanguage, limit, f.ids())
 	if err != nil {
 		return nil, fmt.Errorf("search: %w", err)
 	}
 	defer rows.Close()
 
 	return scanResults(rows, func(r *Result) *float64 { return &r.Similarity })
+}
+
+// ids returns f.IDs for SQL: NULL, meaning no constraint, when there are none.
+func (f Filters) ids() []string {
+	if len(f.IDs) == 0 {
+		return nil
+	}
+
+	return f.IDs
 }
 
 // scanResults reads result rows: the work's columns, then its score, stored where score points.

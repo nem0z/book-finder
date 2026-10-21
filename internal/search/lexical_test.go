@@ -73,6 +73,10 @@ func TestLexical(t *testing.T) {
 		t.Errorf("filter and limit: %v", got)
 	}
 
+	if got := ids(FullText(ctx, pool, query, Filters{IDs: []string{"OL1W", "OL3W"}}, 10)); !slices.Equal(got, []string{"OL3W", "OL1W"}) {
+		t.Errorf("ids: %v", got)
+	}
+
 	if got := ids(Keywords(ctx, pool, "the and of", Filters{}, 10)); len(got) != 0 {
 		t.Errorf("stop words only: %v", got)
 	}
