@@ -61,6 +61,8 @@ func TestRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	rep.Note = "On a sample."
+
 	if pipelines[1].Candidates != 0 || rep.Pipelines[1].Candidates != search.DefaultCandidates {
 		t.Errorf("default candidates: %+v, %+v", pipelines[1], rep.Pipelines[1])
 	}
@@ -86,6 +88,7 @@ func TestRun(t *testing.T) {
 
 	md := b.String()
 	for _, want := range []string{
+		"> On a sample.\n\n## Summary",
 		"| short | 3 | 1/2 | 1 | 1 | 0.50 |",
 		"| # | Kind | Target | short | default |\n|---|---|---|---|---|\n| 1 | plot | Target | 3 → 1 | 3 → 2 |\n| 2 | mood | Lost | – → – | – → – |\n",
 		"## Query 3, judged by hand\n\n> judge me\n\n| # | short | default |\n|---|---|---|\n| 1 | Book J\\|2, Author (2001) | Book J\\|2, Author (2001) |",

@@ -6,12 +6,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nem0z/book-finder/internal/bench"
@@ -24,6 +27,7 @@ import (
 type config struct {
 	url, ollama, queries, out string
 	limit                     int
+	sample                    bool
 	rr                        search.Reranker
 }
 
@@ -37,6 +41,7 @@ func main() {
 	flag.StringVar(&c.queries, "queries", "", "JSON file of queries (default: the built-in ones)")
 	flag.IntVar(&c.limit, "n", search.DefaultLimit, "results per query")
 	flag.StringVar(&c.out, "o", "", "write the report to this file instead of stdout")
+	flag.BoolVar(&c.sample, "sample", false, "search only the works with LLM keywords, in every pipeline")
 	flag.Parse()
 
 	if !*noRerank {
@@ -66,41 +71,96 @@ func run(ctx context.Context, c config) error {
 	}
 	defer pool.Close()
 
-	start := time.Now()
-	rep, err := bench.Run(ctx, c.rr, pipelines(pool, embed.NewOllama(c.ollama, embed.DefaultModel)), queries, c.limit)
+	if _, err := db.Migrate(ctx, pool); err != nil {
+		return err
+	}
+
+	f, note, err := scope(ctx, pool, c.sample)
 	if err != nil {
 		return err
 	}
 
+	start := time.Now()
+	rep, err := bench.Run(ctx, c.rr, pipelines(pool, embed.NewOllama(c.ollama, embed.DefaultModel), f), queries, c.limit)
+	if err != nil {
+		return err
+	}
+
+	rep.Note = note
 	slog.Info("bench finished", "queries", len(queries), "took", time.Since(start).Round(time.Second))
 
 	if c.out == "" {
 		return rep.WriteMarkdown(os.Stdout)
 	}
 
-	f, err := os.Create(c.out)
+	out, err := os.Create(c.out)
 	if err != nil {
 		return err
 	}
 
-	if err := rep.WriteMarkdown(f); err != nil {
-		f.Close()
+	if err := rep.WriteMarkdown(out); err != nil {
+		out.Close()
 		return err
 	}
 
-	return f.Close()
+	return out.Close()
 }
 
-// pipelines returns the pipelines compared: vector search re-ranking the default number of
-// candidates, and re-ranking as many as the keyword pipeline will.
-func pipelines(pool *pgxpool.Pool, emb search.QueryEmbedder) []bench.Pipeline {
-	vector := func(ctx context.Context, query string, n int) ([]search.Result, error) {
-		return search.Semantic(ctx, pool, emb, query, search.Filters{}, n)
+// scope returns the filters every pipeline runs with, and a note on what they searched. With sample,
+// they only search the works with LLM keywords, so that keyword retrieval can be compared before every
+// work has keywords.
+func scope(ctx context.Context, pool *pgxpool.Pool, sample bool) (search.Filters, string, error) {
+	var vectors, keywords int
+	if err := pool.QueryRow(ctx, "SELECT (SELECT count(*) FROM work_embeddings), (SELECT count(*) FROM work_keywords)").
+		Scan(&vectors, &keywords); err != nil {
+		return search.Filters{}, "", err
+	}
+
+	if !sample {
+		if keywords < vectors {
+			return search.Filters{}, fmt.Sprintf("Keyword retrieval only searched the %d works with LLM keywords, "+
+				"out of %d with a vector, so its results aren't comparable (see -sample).", keywords, vectors), nil
+		}
+
+		return search.Filters{}, "", nil
+	}
+
+	rows, err := pool.Query(ctx, "SELECT work_id FROM work_keywords")
+	if err != nil {
+		return search.Filters{}, "", err
+	}
+
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return search.Filters{}, "", err
+	}
+
+	if len(ids) == 0 {
+		return search.Filters{}, "", errors.New("no work has LLM keywords yet; run cmd/enrich first")
+	}
+
+	return search.Filters{IDs: ids}, fmt.Sprintf("Every pipeline searched the same sample of %d works (those with LLM "+
+		"keywords), not the %d with a vector. Results on a sample may not hold for the full catalogue, which has "+
+		"more wrong candidates to rank above the target.", len(ids), vectors), nil
+}
+
+// pipelines returns the pipelines compared, all searching within f: vector search and keyword search on
+// the LLM keywords, each re-ranking the default number of candidates or 100, and keyword search on the
+// full text, re-ranking 100.
+func pipelines(pool *pgxpool.Pool, emb search.QueryEmbedder, f search.Filters) []bench.Pipeline {
+	retrieve := func(r search.Retrieval) bench.RetrieveFunc {
+		e := &search.Engine{Pool: pool, Embedder: emb, Retrieval: r}
+		return func(ctx context.Context, query string, n int) ([]search.Result, error) {
+			return e.Retrieve(ctx, query, f, n)
+		}
 	}
 
 	return []bench.Pipeline{
-		{Name: "vector", Retrieve: vector, Candidates: search.DefaultCandidates},
-		{Name: "vector-100", Retrieve: vector, Candidates: bench.RecallDepth},
+		{Name: "vector", Retrieve: retrieve(search.RetrieveVector), Candidates: search.DefaultCandidates},
+		{Name: "vector-100", Retrieve: retrieve(search.RetrieveVector), Candidates: bench.RecallDepth},
+		{Name: "keywords", Retrieve: retrieve(search.RetrieveKeywords), Candidates: search.DefaultCandidates},
+		{Name: "keywords-100", Retrieve: retrieve(search.RetrieveKeywords), Candidates: bench.RecallDepth},
+		{Name: "fulltext-100", Retrieve: retrieve(search.RetrieveFullText), Candidates: bench.RecallDepth},
 	}
 }
 

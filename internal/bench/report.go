@@ -12,6 +12,10 @@ import (
 // query, and the results of the queries without targets side by side.
 func (r Report) WriteMarkdown(w io.Writer) error {
 	var b strings.Builder
+	if r.Note != "" {
+		b.WriteString("> " + strings.ReplaceAll(r.Note, "\n", " ") + "\n\n")
+	}
+
 	r.writeSummary(&b)
 	r.writeRanks(&b)
 	r.writeJudged(&b)

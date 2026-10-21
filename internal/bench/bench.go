@@ -69,6 +69,8 @@ type Report struct {
 	Pipelines []Pipeline
 	Limit     int
 	Outcomes  [][]Outcome
+	// Note, when set, is written above the results: what the pipelines searched, for example.
+	Note string
 }
 
 // LoadQueries reads queries from a JSON file, or returns the built-in ones when path is empty.
