@@ -66,6 +66,31 @@ Embeds the 10,000 most-rated works with a clean description (at least 300 bytes,
 Ollama. Without `-limit` it embeds every eligible work, which takes about 11 hours on a 16-core CPU. It only
 computes missing or outdated vectors, so it can be stopped with Ctrl+C and run again.
 
+## Extract keywords
+
+```sh
+go run ./cmd/enrich -limit 300 -per-minute 30
+```
+
+An LLM reads the title, authors and description of the works with a vector and extracts keywords: places, period,
+themes, tropes, mood and type of protagonist, with common synonyms. It also returns structured setting facts (places,
+the years the story takes place) and themes. They're stored in `work_keywords` (see [docs/schema.md](docs/schema.md))
+for keyword search. It works most-rated first and only extracts works whose keywords are missing or outdated (a new
+model, prompt or description), so it can be stopped with Ctrl+C and run again.
+
+- `-ids OL1W,OL2W` or `-ids @file` (one ID per line) limits the run to some works.
+- `-concurrency` sets how many requests run at once (default 4).
+- `-per-minute` caps the requests per minute, to leave room for other users of the same deployment (about 700 tokens
+  per request).
+
+The LLM is set with environment variables:
+- `LLM_PROVIDER`: `azure` (default) or `ollama`.
+- `LLM_URL`: e.g. `https://<resource>.openai.azure.com/openai/v1`, or `http://localhost:11434`.
+- `LLM_MODEL`: the deployment name on Azure.
+- `LLM_API_KEY`.
+
+Keep the key in the git-ignored `.env`.
+
 ## Search
 
 ```sh

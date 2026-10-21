@@ -94,6 +94,10 @@ func ReadPending(ctx context.Context, pool *pgxpool.Pool, model string, ids []st
 
 // Save stores keywords extracted by model, replacing older ones.
 func Save(ctx context.Context, pool *pgxpool.Pool, model string, rows []Extracted) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
 	batch := &pgx.Batch{}
 	for _, r := range rows {
 		k := r.Keywords.Normalize()
