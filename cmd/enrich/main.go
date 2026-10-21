@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -45,6 +46,11 @@ func run(ctx context.Context, url string, c llm.Config, ids string, opts enrich.
 	client, err := llm.New(c)
 	if err != nil {
 		return err
+	}
+
+	// The Copilot client runs a child process.
+	if closer, ok := client.(io.Closer); ok {
+		defer closer.Close()
 	}
 
 	if opts.IDs, err = parseIDs(ids); err != nil {
