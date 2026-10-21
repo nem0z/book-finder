@@ -1,5 +1,6 @@
 // Package llm asks chat models for answers in a given JSON shape. Each provider implements Client: Azure
-// OpenAI and Ollama through their OpenAI-compatible chat completions API, with structured outputs.
+// OpenAI and Ollama through their OpenAI-compatible chat completions API with structured outputs, and
+// GitHub Copilot through the Copilot SDK.
 package llm
 
 import (
@@ -11,8 +12,9 @@ import (
 
 // Providers, as named in Config.
 const (
-	ProviderAzure  = "azure"
-	ProviderOllama = "ollama"
+	ProviderAzure   = "azure"
+	ProviderOllama  = "ollama"
+	ProviderCopilot = "copilot"
 )
 
 var (
@@ -32,10 +34,12 @@ type Client interface {
 type Config struct {
 	Provider string
 	// URL is the API's base URL: https://<resource>.openai.azure.com/openai/v1 for Azure, Ollama's
-	// address (http://localhost:11434) for Ollama.
+	// address (http://localhost:11434) for Ollama. Unused by Copilot.
 	URL string
 	// Model is the model name, or the deployment name on Azure.
-	Model  string
+	Model string
+	// APIKey is the Azure OpenAI key, or the GitHub token for Copilot (empty: the account signed in on this
+	// machine).
 	APIKey string
 }
 
@@ -58,7 +62,9 @@ func New(c Config) (Client, error) {
 		}
 
 		return NewOllama(c.URL, c.Model), nil
+	case ProviderCopilot:
+		return NewCopilot(c.Model, c.APIKey), nil
 	default:
-		return nil, fmt.Errorf("%w: unknown provider %q, want %s or %s", ErrConfig, c.Provider, ProviderAzure, ProviderOllama)
+		return nil, fmt.Errorf("%w: unknown provider %q, want %s, %s or %s", ErrConfig, c.Provider, ProviderAzure, ProviderOllama, ProviderCopilot)
 	}
 }
