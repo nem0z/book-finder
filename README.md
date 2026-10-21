@@ -97,6 +97,20 @@ For Docker, put the key in a `.env` file next to `docker-compose.yml` (git-ignor
 VOYAGE_API_KEY=pa-...
 ```
 
+## Benchmark
+
+```sh
+go run ./cmd/bench -o bench.md
+```
+
+Runs 42 test queries (`internal/bench/queries.json`) through each search pipeline and writes a Markdown report. 41 of
+the queries describe a known book without naming it. For those, the report shows whether the book is among the first
+100 candidates, its rank after re-ranking, hit@1, hit@10, MRR and the mean times. The last query is judged by hand,
+so its top 10 is printed side by side for each pipeline. Pipelines: `vector` (re-ranks the 30 nearest works, as
+`cmd/search` does) and `vector-100` (re-ranks 100). Flags: `-o`, `-queries` (another query file), `-n`,
+`-no-rerank`, and the same `-db`, `-ollama`, `-reranker` and `-voyage-model` as `cmd/search`. With the local
+re-ranker, a run takes about 15 minutes.
+
 ## API
 
 ```sh
