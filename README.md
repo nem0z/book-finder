@@ -141,7 +141,9 @@ environment:
 `copilot` goes through the [Copilot SDK](https://github.com/github/copilot-sdk), which runs the Copilot runtime as
 a child process. The Docker image has it built in. For `go run`, build it into the command once with
 `go tool bundler` in its directory (`cd cmd/search && go tool bundler`; the files are git-ignored), or point
-`COPILOT_CLI_PATH` to a `copilot-runtime` executable. With `claude-haiku-5.5`, reading a query takes 2 to 3 s.
+`COPILOT_CLI_PATH` to a `copilot-runtime` executable. The bundler also marks `github.com/klauspost/compress` as a
+direct dependency in `go.mod`, which its generated files import; leave that change out of commits
+(`git checkout go.mod`). With `claude-haiku-5.5`, reading a query takes 2 to 3 s.
 
 For `ollama`, the official `ollama/ollama` image can serve a small chat model (`ollama pull qwen2.5:3b`); the
 `ollama` service of `docker-compose.yml` only has the embedding model. Small local models follow the
