@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nem0z/book-finder/internal/llm"
 	"github.com/nem0z/book-finder/internal/search"
 )
 
@@ -93,5 +94,31 @@ func TestInterpretation(t *testing.T) {
 		if got := all.interpretation(query, 2026); got.Filters != want {
 			t.Errorf("%q: got %+v", query, got.Filters)
 		}
+	}
+}
+
+func TestFromConfig(t *testing.T) {
+	if in, _, err := FromConfig(llm.Config{}, ""); in != nil || err != nil {
+		t.Errorf("off: %v, %v", in, err)
+	}
+
+	ollama := llm.Config{Provider: llm.ProviderOllama, URL: "http://o", Model: "m"}
+	for _, bad := range []string{"", "5", "-1s"} {
+		if _, _, err := FromConfig(ollama, bad); !errors.Is(err, llm.ErrConfig) {
+			t.Errorf("timeout %q: %v", bad, err)
+		}
+	}
+
+	if _, _, err := FromConfig(llm.Config{Provider: "nope", Model: "m"}, "5s"); !errors.Is(err, llm.ErrConfig) {
+		t.Errorf("bad provider: %v", err)
+	}
+
+	in, d, err := FromConfig(ollama, "30s")
+	if err != nil || in == nil || d != 30*time.Second || in.Close() != nil {
+		t.Errorf("got %v, %v, %v", in, d, err)
+	}
+
+	if err := (*Interpreter)(nil).Close(); err != nil {
+		t.Errorf("nil close: %v", err)
 	}
 }
