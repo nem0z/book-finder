@@ -37,20 +37,27 @@ func (e *Engine) Search(ctx context.Context, query string, f Filters, limit int)
 	return results, err
 }
 
-// SearchInterpreted is Search, also returning the description and filters the search used.
-func (e *Engine) SearchInterpreted(ctx context.Context, query string, f Filters, limit int) ([]Result, Interpretation, error) {
+// SearchInterpreted is Search, also returning what the Interpreter understood: the description that was
+// embedded and the filters the search applied, including the caller's. It is nil when the query was
+// searched as it is, without an Interpreter or because it failed.
+func (e *Engine) SearchInterpreted(ctx context.Context, query string, f Filters, limit int) ([]Result, *Interpretation, error) {
 	if strings.TrimSpace(query) == "" {
-		return nil, Interpretation{}, ErrEmptyQuery
+		return nil, nil, ErrEmptyQuery
 	}
 
 	if limit <= 0 {
 		limit = DefaultLimit
 	}
 
-	in := e.interpret(ctx, query, f)
+	in, ok := e.interpret(ctx, query, f)
+	var understood *Interpretation
+	if ok {
+		understood = &in
+	}
+
 	if e.Reranker == nil {
 		results, err := Semantic(ctx, e.Pool, e.Embedder, in.Description, in.Filters, limit)
-		return results, in, err
+		return results, understood, err
 	}
 
 	candidates := e.Candidates
@@ -60,19 +67,19 @@ func (e *Engine) SearchInterpreted(ctx context.Context, query string, f Filters,
 
 	results, err := Semantic(ctx, e.Pool, e.Embedder, in.Description, in.Filters, max(candidates, limit))
 	if err != nil {
-		return nil, in, err
+		return nil, understood, err
 	}
 
 	results, err = Rerank(ctx, e.Reranker, query, results, limit)
-	return results, in, err
+	return results, understood, err
 }
 
 // interpret returns what to search for: the query and f as they are without an Interpreter or when it
-// fails, else its description and its filters merged into f.
-func (e *Engine) interpret(ctx context.Context, query string, f Filters) Interpretation {
+// fails (false), else its description and its filters merged into f (true).
+func (e *Engine) interpret(ctx context.Context, query string, f Filters) (Interpretation, bool) {
 	in := Interpretation{Filters: f, Description: query}
 	if e.Interpreter == nil {
-		return in
+		return in, false
 	}
 
 	timeout := e.InterpretTimeout
@@ -89,7 +96,7 @@ func (e *Engine) interpret(ctx context.Context, query string, f Filters) Interpr
 			e.log().Warn("query not interpreted, searching with it as is", "err", err)
 		}
 
-		return in
+		return in, false
 	}
 
 	if d := strings.TrimSpace(got.Description); d != "" {
@@ -98,7 +105,7 @@ func (e *Engine) interpret(ctx context.Context, query string, f Filters) Interpr
 
 	in.Filters = merge(f, got.Filters)
 
-	return in
+	return in, true
 }
 
 func (e *Engine) log() *slog.Logger {

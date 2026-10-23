@@ -1,12 +1,13 @@
 import { useRef, useState, type FormEvent } from "react";
-import { searchBooks, type Book } from "./api";
+import { searchBooks, type Book, type Interpretation } from "./api";
 import BookCard from "./BookCard";
+import Understood from "./Understood";
 
 type State =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "done"; books: Book[] };
+  | { status: "done"; books: Book[]; interpretation?: Interpretation };
 
 export default function App() {
   const [query, setQuery] = useState("");
@@ -25,7 +26,7 @@ export default function App() {
     setState({ status: "loading" });
 
     try {
-      setState({ status: "done", books: await searchBooks(q, ctrl.signal) });
+      setState({ status: "done", ...(await searchBooks(q, ctrl.signal)) });
     } catch (err) {
       if (ctrl.signal.aborted) return;
       setState({ status: "error", message: err instanceof Error ? err.message : String(err) });
@@ -52,6 +53,7 @@ export default function App() {
       </form>
 
       {state.status === "error" && <p className="error">{state.message}</p>}
+      {state.status === "done" && state.interpretation && <Understood interpretation={state.interpretation} />}
       {state.status === "done" && state.books.length === 0 && <p className="empty">No books found.</p>}
       {state.status === "done" && (
         <ol className="results">
