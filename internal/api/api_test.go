@@ -17,14 +17,15 @@ import (
 
 type fakeSearcher struct {
 	results []search.Result
+	in      *search.Interpretation
 	err     error
 	query   string
 	limit   int
 }
 
-func (f *fakeSearcher) Search(_ context.Context, query string, _ search.Filters, limit int) ([]search.Result, error) {
+func (f *fakeSearcher) SearchInterpreted(_ context.Context, query string, _ search.Filters, limit int) ([]search.Result, *search.Interpretation, error) {
 	f.query, f.limit = query, limit
-	return f.results, f.err
+	return f.results, f.in, f.err
 }
 
 func get(t *testing.T, h http.Handler, target string) (*httptest.ResponseRecorder, map[string]any) {
@@ -67,6 +68,24 @@ func TestSearch(t *testing.T) {
 	second := results[1].(map[string]any)
 	if _, ok := second["cover_url"]; ok || second["authors"] == nil || second["tags"] == nil {
 		t.Errorf("second should have no cover and empty lists: %v", second)
+	}
+
+	if _, ok := body["interpretation"]; ok {
+		t.Errorf("interpretation without an LLM: %v", body["interpretation"])
+	}
+}
+
+func TestSearchInterpretation(t *testing.T) {
+	s := &fakeSearcher{
+		results: []search.Result{{ID: "OL1W", Title: "Two Blankets, Three Sheets"}},
+		in:      &search.Interpretation{Description: "An expat settles in Amsterdam.", Filters: search.Filters{MinYear: 2020, MaxPages: 300}},
+	}
+	rec := httptest.NewRecorder()
+	NewHandler(s, slog.New(slog.NewTextHandler(io.Discard, nil))).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?q=amsterdam", nil))
+
+	want := `"interpretation":{"description":"An expat settles in Amsterdam.","filters":{"min_year":2020,"max_pages":300}}`
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Errorf("got %s, want %s", rec.Body.String(), want)
 	}
 }
 

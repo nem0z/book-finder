@@ -24,9 +24,9 @@ const (
 	openLibraryURL = "https://openlibrary.org/works/"
 )
 
-// Searcher runs a search. *search.Engine implements it.
+// Searcher runs a search and says what it understood of the query. *search.Engine implements it.
 type Searcher interface {
-	Search(ctx context.Context, query string, f search.Filters, limit int) ([]search.Result, error)
+	SearchInterpreted(ctx context.Context, query string, f search.Filters, limit int) ([]search.Result, *search.Interpretation, error)
 }
 
 // Book is one search result as returned by the API.
@@ -43,8 +43,26 @@ type Book struct {
 }
 
 type searchResponse struct {
-	Query   string `json:"query"`
-	Results []Book `json:"results"`
+	Query string `json:"query"`
+	// Interpretation is what an LLM understood of the query; absent when the query was searched as typed.
+	Interpretation *Interpretation `json:"interpretation,omitempty"`
+	Results        []Book          `json:"results"`
+}
+
+// Interpretation is the description of the wanted book that the search used in place of the query, and
+// the filters it applied.
+type Interpretation struct {
+	Description string  `json:"description"`
+	Filters     Filters `json:"filters"`
+}
+
+// Filters are the bounds a search applied; absent ones were not set.
+type Filters struct {
+	MinYear          int    `json:"min_year,omitempty"`
+	MaxYear          int    `json:"max_year,omitempty"`
+	MinPages         int    `json:"min_pages,omitempty"`
+	MaxPages         int    `json:"max_pages,omitempty"`
+	OriginalLanguage string `json:"original_language,omitempty"`
 }
 
 type errorResponse struct {
@@ -76,7 +94,7 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := h.searcher.Search(r.Context(), query, search.Filters{}, ResultLimit)
+	results, in, err := h.searcher.SearchInterpreted(r.Context(), query, search.Filters{}, ResultLimit)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -87,7 +105,7 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 		books[i] = toBook(res)
 	}
 
-	writeJSON(w, http.StatusOK, searchResponse{Query: query, Results: books})
+	writeJSON(w, http.StatusOK, searchResponse{Query: query, Interpretation: toInterpretation(in), Results: books})
 }
 
 // fail logs a search error and answers without its details, which can include internal addresses.
@@ -119,6 +137,20 @@ func toBook(r search.Result) Book {
 	}
 
 	return b
+}
+
+func toInterpretation(in *search.Interpretation) *Interpretation {
+	if in == nil {
+		return nil
+	}
+
+	f := in.Filters
+
+	return &Interpretation{
+		Description: in.Description,
+		Filters: Filters{MinYear: f.MinYear, MaxYear: f.MaxYear, MinPages: f.MinPages, MaxPages: f.MaxPages,
+			OriginalLanguage: f.OriginalLanguage},
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
