@@ -120,6 +120,29 @@ says so. Results on a sample may not hold for the full catalogue.
 Flags: `-o`, `-sample`, `-queries` (another query file), `-n`, `-no-rerank`, and the same `-db`, `-ollama`,
 `-reranker` and `-voyage-model` as `cmd/search`. With the local re-ranker, a run takes about 30 minutes.
 
+### Relevance of the retrieved books
+
+```sh
+go run ./cmd/bench -sample -judge -o relevance.md
+```
+
+With `-judge`, nothing is re-ranked. For each query, it takes the top 100 from vector retrieval and the top 100 from
+keyword retrieval, and an LLM rates every result:
+- 0: not relevant.
+- 1: weak match.
+- 2: reasonable suggestion.
+- 3: strong match.
+
+The LLM reads the query and the book's title, authors, year and description; the rubric is in
+`internal/bench/judge.go`. The report gives each method's mean rating and share of results rated 2 or more over the
+top 10, 30 and 100, how many known targets each list contains, how many works the two lists share, and retrieval
+times. An appendix gives the same per query.
+
+A work in both lists is rated once. Ratings are cached in `bench-judgments.jsonl` (`-judge-cache`, git-ignored), keyed
+by model, prompt version, query and book text, so a rerun only rates new pairs. `-concurrency` (default 4) and
+`-per-minute` (default 60) pace the LLM calls. The LLM is set as for `cmd/enrich` (`LLM_PROVIDER`, `LLM_URL`,
+`LLM_MODEL`, `LLM_API_KEY`). A full run makes up to 42 × 200 ratings, fewer when the lists overlap.
+
 ## API
 
 ```sh
