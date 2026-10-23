@@ -50,6 +50,15 @@ func RunRelevance(ctx context.Context, judge *Judge, methods []Method, queries [
 		rel.Methods = append(rel.Methods, m.Name)
 	}
 
+	// Untimed first call: the first query embedding loads the model, the first SQL warms the caches.
+	if len(queries) > 0 {
+		for _, m := range methods {
+			if _, err := m.Retrieve(ctx, queries[0].Query, RecallDepth); err != nil {
+				return rel, fmt.Errorf("%s: %w", m.Name, err)
+			}
+		}
+	}
+
 	for qi, q := range queries {
 		var union []search.Result
 		seen := map[string]bool{}
@@ -187,7 +196,7 @@ func (r Relevance) writeSummary(b *strings.Builder) {
 	fmt.Fprintf(b, "## Summary\n\nEach method's top %d for each of the %d queries, without re-ranking. An LLM rated every "+
 		"result from 0 (not relevant) to %d (strong match), reading the query and the book's title, authors, year and "+
 		"description. Mean: mean rating of a result. ≥2: share of results rated 2 or 3. Target: queries (of %d) whose "+
-		"known book is in the list. Retrieval: time to get the top %d, mean and slowest.\n\n",
+		"known book is in the list. Retrieval: time to get the top %d after a warm-up call, mean and slowest; vector includes embedding the query.\n\n",
 		RecallDepth, len(r.Queries), MaxRating, targets, RecallDepth)
 
 	b.WriteString("| Method |")
