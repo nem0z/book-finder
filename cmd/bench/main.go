@@ -1,7 +1,9 @@
 // Command bench measures how well each search pipeline finds known books, and prints a Markdown
-// report: see internal/bench.
+// report: see internal/bench. With -judge, it has an LLM rate the top 100 of vector and keyword retrieval instead,
+// without re-ranking; the LLM is set by LLM_PROVIDER, LLM_URL, LLM_MODEL and LLM_API_KEY.
 //
 //	go run ./cmd/bench > bench.md
+//	go run ./cmd/bench -sample -judge -o relevance.md
 package main
 
 import (
@@ -9,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -20,6 +23,7 @@ import (
 	"github.com/nem0z/book-finder/internal/bench"
 	"github.com/nem0z/book-finder/internal/db"
 	"github.com/nem0z/book-finder/internal/embed"
+	"github.com/nem0z/book-finder/internal/llm"
 	"github.com/nem0z/book-finder/internal/rerank"
 	"github.com/nem0z/book-finder/internal/search"
 )
@@ -29,6 +33,10 @@ type config struct {
 	limit                     int
 	sample                    bool
 	rr                        search.Reranker
+
+	judge              bool
+	cache              string
+	workers, perMinute int
 }
 
 func main() {
@@ -42,9 +50,13 @@ func main() {
 	flag.IntVar(&c.limit, "n", search.DefaultLimit, "results per query")
 	flag.StringVar(&c.out, "o", "", "write the report to this file instead of stdout")
 	flag.BoolVar(&c.sample, "sample", false, "search only the works with LLM keywords, in every pipeline")
+	flag.BoolVar(&c.judge, "judge", false, "have an LLM rate the top 100 of vector and keyword retrieval, without re-ranking")
+	flag.StringVar(&c.cache, "judge-cache", "bench-judgments.jsonl", "file the -judge ratings are cached in")
+	flag.IntVar(&c.workers, "concurrency", 4, "-judge ratings asked at once")
+	flag.IntVar(&c.perMinute, "per-minute", 60, "at most this many -judge ratings per minute (0: no cap)")
 	flag.Parse()
 
-	if !*noRerank {
+	if !*noRerank && !c.judge {
 		var name string
 		c.rr, name = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
 		slog.Info("re-ranker", "name", name)
@@ -80,8 +92,13 @@ func run(ctx context.Context, c config) error {
 		return err
 	}
 
+	emb := embed.NewOllama(c.ollama, embed.DefaultModel)
+	if c.judge {
+		return runJudge(ctx, c, pool, emb, f, note, queries)
+	}
+
 	start := time.Now()
-	rep, err := bench.Run(ctx, c.rr, pipelines(pool, embed.NewOllama(c.ollama, embed.DefaultModel), f), queries, c.limit)
+	rep, err := bench.Run(ctx, c.rr, pipelines(pool, emb, f), queries, c.limit)
 	if err != nil {
 		return err
 	}
@@ -89,16 +106,61 @@ func run(ctx context.Context, c config) error {
 	rep.Note = note
 	slog.Info("bench finished", "queries", len(queries), "took", time.Since(start).Round(time.Second))
 
-	if c.out == "" {
-		return rep.WriteMarkdown(os.Stdout)
-	}
+	return write(c.out, rep.WriteMarkdown)
+}
 
-	out, err := os.Create(c.out)
+// runJudge has an LLM rate the top 100 of vector and keyword retrieval for every query.
+func runJudge(ctx context.Context, c config, pool *pgxpool.Pool, emb search.QueryEmbedder, f search.Filters, note string, queries []bench.Query) error {
+	lc := llm.Config{Provider: envOr("LLM_PROVIDER", llm.ProviderAzure), URL: os.Getenv("LLM_URL"),
+		Model: os.Getenv("LLM_MODEL"), APIKey: os.Getenv("LLM_API_KEY")}
+	client, err := llm.New(lc)
 	if err != nil {
 		return err
 	}
 
-	if err := rep.WriteMarkdown(out); err != nil {
+	// The Copilot client runs a child process.
+	if closer, ok := client.(io.Closer); ok {
+		defer closer.Close()
+	}
+
+	judge, err := bench.OpenJudge(client, lc.Model, c.cache)
+	if err != nil {
+		return err
+	}
+	defer judge.Close()
+
+	judge.Workers, judge.PerMinute = c.workers, c.perMinute
+	methods := []bench.Method{
+		{Name: "vector", Retrieve: retriever(pool, emb, search.RetrieveVector, f)},
+		{Name: "keywords", Retrieve: retriever(pool, emb, search.RetrieveKeywords, f)},
+	}
+
+	start := time.Now()
+	rel, err := bench.RunRelevance(ctx, judge, methods, queries)
+	if err != nil {
+		return err
+	}
+
+	cached, asked, failed := judge.Stats()
+	rel.Note = fmt.Sprintf("%s Ratings by %s (%s): %d cached, %d asked in this run, %d failed.", note, lc.Model,
+		lc.Provider, cached, asked, failed)
+	slog.Info("bench finished", "queries", len(queries), "took", time.Since(start).Round(time.Second))
+
+	return write(c.out, rel.WriteMarkdown)
+}
+
+// write writes a report to the file at path, or to stdout when path is empty.
+func write(path string, report func(io.Writer) error) error {
+	if path == "" {
+		return report(os.Stdout)
+	}
+
+	out, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+
+	if err := report(out); err != nil {
 		out.Close()
 		return err
 	}
@@ -148,12 +210,7 @@ func scope(ctx context.Context, pool *pgxpool.Pool, sample bool) (search.Filters
 // the LLM keywords, each re-ranking the default number of candidates or 100, and keyword search on the
 // full text, re-ranking 100.
 func pipelines(pool *pgxpool.Pool, emb search.QueryEmbedder, f search.Filters) []bench.Pipeline {
-	retrieve := func(r search.Retrieval) bench.RetrieveFunc {
-		e := &search.Engine{Pool: pool, Embedder: emb, Retrieval: r}
-		return func(ctx context.Context, query string, n int) ([]search.Result, error) {
-			return e.Retrieve(ctx, query, f, n)
-		}
-	}
+	retrieve := func(r search.Retrieval) bench.RetrieveFunc { return retriever(pool, emb, r, f) }
 
 	return []bench.Pipeline{
 		{Name: "vector", Retrieve: retrieve(search.RetrieveVector), Candidates: search.DefaultCandidates},
@@ -170,4 +227,12 @@ func envOr(key, def string) string {
 	}
 
 	return def
+}
+
+// retriever returns retrieval r within f.
+func retriever(pool *pgxpool.Pool, emb search.QueryEmbedder, r search.Retrieval, f search.Filters) bench.RetrieveFunc {
+	e := &search.Engine{Pool: pool, Embedder: emb, Retrieval: r}
+	return func(ctx context.Context, query string, n int) ([]search.Result, error) {
+		return e.Retrieve(ctx, query, f, n)
+	}
 }
