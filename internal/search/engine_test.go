@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -46,20 +47,21 @@ func TestInterpret(t *testing.T) {
 		name string
 		it   Interpreter
 		want Interpretation
+		ok   bool
 		warn bool
 	}{
-		{"none", nil, Interpretation{Filters: caller, Description: "q"}, false},
-		{"merged", fakeInterpreter{in: interpreted}, Interpretation{Filters: Filters{MaxYear: 1950, MaxPages: 300, OriginalLanguage: "eng"}, Description: "a blurb"}, false},
-		{"empty description", fakeInterpreter{in: Interpretation{Filters: Filters{MinPages: 50}}}, Interpretation{Filters: Filters{MaxYear: 1950, MinPages: 50, OriginalLanguage: "eng"}, Description: "q"}, false},
-		{"error", fakeInterpreter{err: errors.New("down")}, Interpretation{Filters: caller, Description: "q"}, true},
-		{"timeout", fakeInterpreter{in: interpreted, delay: time.Second}, Interpretation{Filters: caller, Description: "q"}, true},
+		{"none", nil, Interpretation{Filters: caller, Description: "q"}, false, false},
+		{"merged", fakeInterpreter{in: interpreted}, Interpretation{Filters: Filters{MaxYear: 1950, MaxPages: 300, OriginalLanguage: "eng"}, Description: "a blurb"}, true, false},
+		{"empty description", fakeInterpreter{in: Interpretation{Filters: Filters{MinPages: 50}}}, Interpretation{Filters: Filters{MaxYear: 1950, MinPages: 50, OriginalLanguage: "eng"}, Description: "q"}, true, false},
+		{"error", fakeInterpreter{err: errors.New("down")}, Interpretation{Filters: caller, Description: "q"}, false, true},
+		{"timeout", fakeInterpreter{in: interpreted, delay: time.Second}, Interpretation{Filters: caller, Description: "q"}, false, true},
 	}
 
 	for _, tt := range tests {
 		var logs bytes.Buffer
 		e := &Engine{Interpreter: tt.it, InterpretTimeout: 10 * time.Millisecond, Log: slog.New(slog.NewTextHandler(&logs, nil))}
-		if got := e.interpret(ctx, "q", caller); got != tt.want {
-			t.Errorf("%s: got %+v", tt.name, got)
+		if got, ok := e.interpret(ctx, "q", caller); got != tt.want || ok != tt.ok {
+			t.Errorf("%s: got %+v, %v", tt.name, got, ok)
 		}
 
 		if warned := strings.Contains(logs.String(), "not interpreted"); warned != tt.warn {
@@ -99,12 +101,19 @@ func TestEngineSearchInterpreted(t *testing.T) {
 	e := &Engine{Pool: pool, Embedder: emb, Reranker: rr,
 		Interpreter: fakeInterpreter{in: Interpretation{Filters: Filters{MinYear: 2020}, Description: "a blurb"}}}
 	res, in, err := e.SearchInterpreted(ctx, "I want a recent book", Filters{}, 10)
-	if err != nil || len(res) != 1 || res[0].ID != "OL2W" || in.Filters.MinYear != 2020 {
+	if err != nil || len(res) != 1 || res[0].ID != "OL2W" || in == nil || in.Filters.MinYear != 2020 || in.Description != "a blurb" {
 		t.Fatalf("got %+v, %+v, %v", res, in, err)
 	}
 
 	if emb.text != "a blurb" || rr.query != "I want a recent book" {
 		t.Errorf("embedded %q, re-ranked with %q", emb.text, rr.query)
+	}
+
+	e.Interpreter = fakeInterpreter{err: errors.New("down")}
+	e.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	rr.scores = []float64{1, 2}
+	if res, in, err := e.SearchInterpreted(ctx, "I want a recent book", Filters{}, 10); err != nil || len(res) != 2 || in != nil {
+		t.Errorf("fallback: %+v, %+v, %v", res, in, err)
 	}
 
 	if _, _, err := e.SearchInterpreted(ctx, " ", Filters{}, 10); !errors.Is(err, ErrEmptyQuery) {

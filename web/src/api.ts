@@ -12,15 +12,29 @@ export type Book = {
   url: string;
 };
 
-type SearchResponse = { query: string; results: Book[] };
+export type Filters = {
+  min_year?: number;
+  max_year?: number;
+  min_pages?: number;
+  max_pages?: number;
+  original_language?: string;
+};
+
+// What an LLM understood of the query: the description searched for instead, and the filters applied.
+export type Interpretation = { description: string; filters: Filters };
+
+export type SearchResult = { books: Book[]; interpretation?: Interpretation };
+
+type SearchResponse = { query: string; interpretation?: Interpretation; results: Book[] };
 type ErrorResponse = { error: string };
 
-export async function searchBooks(query: string, signal?: AbortSignal): Promise<Book[]> {
+export async function searchBooks(query: string, signal?: AbortSignal): Promise<SearchResult> {
   const res = await fetch(`/search?q=${encodeURIComponent(query)}`, { signal });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as ErrorResponse | null;
     throw new Error(body?.error ?? `search failed (${res.status})`);
   }
 
-  return ((await res.json()) as SearchResponse).results;
+  const body = (await res.json()) as SearchResponse;
+  return { books: body.results, interpretation: body.interpretation };
 }
