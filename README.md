@@ -82,6 +82,13 @@ model, prompt or description), so it can be stopped with Ctrl+C and run again.
 - `-concurrency` sets how many requests run at once (default 4).
 - `-per-minute` caps the requests per minute, to leave room for other users of the same deployment (about 700 tokens
   per request).
+- `-per-request 5` asks about 5 books per request. Each book has its ID in the request and must have it in the answer. Books
+  the answer misses are asked again one by one, and so is the whole group when an ID comes back twice or was not asked
+  about. It sends the instructions once per request, and gets around per-request rate limits: with GitHub Copilot
+  (claude-haiku-5.5), 1 book per request tops out at about 400 requests per minute, while 96 concurrent requests of 5
+  books extract about 1,800 books per minute. On 60 test books, packed keywords matched single-book ones a little less
+  than a second single-book run did, with no words taken from the other books in the request. 10 books per request
+  were riskier.
 
 The LLM is set with environment variables:
 - `LLM_PROVIDER`: `azure` (default) or `ollama`.
