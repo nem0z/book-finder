@@ -215,7 +215,7 @@ func scope(ctx context.Context, pool *pgxpool.Pool, sample bool) (search.Filters
 				"out of %d with a vector, so its results aren't comparable (see -sample).", keywords, vectors), nil
 		}
 
-		return search.Filters{}, "", nil
+		return search.Filters{}, fmt.Sprintf("Every method searched the whole catalogue: the %d works with a vector, all with LLM keywords.", vectors), nil
 	}
 
 	rows, err := pool.Query(ctx, "SELECT work_id FROM work_keywords")
