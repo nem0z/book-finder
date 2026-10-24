@@ -60,7 +60,7 @@ func main() {
 	flag.IntVar(&c.workers, "concurrency", 4, "-judge ratings asked at once")
 	flag.IntVar(&c.perMinute, "per-minute", 60, "at most this many -judge ratings per minute (0: no cap)")
 	flag.BoolVar(&c.rerankEffect, "rerank-effect", false, "show what the re-ranker does to the top 100 of keyword-vector retrieval, re-ranking the top 30 or all 100, with -judge's ratings")
-	flag.StringVar(&c.svg, "svg", "", "with -rerank-effect, also draw each variant as <svg>-<depth>.svg")
+	flag.StringVar(&c.svg, "svg", "", "with -rerank-effect, also draw each variant as <svg>-<depth>.svg and the mean rating per rank as <svg>-curve.svg")
 	flag.Parse()
 
 	if !*noRerank && (!c.judge || c.rerankEffect) {
@@ -182,6 +182,10 @@ func runRerankEffect(ctx context.Context, c config, pool *pgxpool.Pool, emb sear
 			if err := write(fmt.Sprintf("%s-%d.svg", c.svg, d), func(w io.Writer) error { return e.WriteSVG(w, v) }); err != nil {
 				return err
 			}
+		}
+
+		if err := write(c.svg+"-curve.svg", e.WriteCurveSVG); err != nil {
+			return err
 		}
 	}
 

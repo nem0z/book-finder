@@ -79,4 +79,14 @@ func TestRerankEffect(t *testing.T) {
 	if n := strings.Count(svg.String(), `r="2.6"`); n != 40 || !strings.HasSuffix(svg.String(), "</svg>\n") {
 		t.Errorf("svg: %d dots", n)
 	}
+
+	// Re-ranking all 40 puts the work rated 3 first: the curve starts at (3+0+0)/3 = 1.
+	if c := e.curve(e.After[1]); len(c) != RecallDepth || c[0] != 1 || c[39] == 0 || c[60] != 0 {
+		t.Errorf("curve: %v", c[:5])
+	}
+
+	svg.Reset()
+	if err := e.WriteCurveSVG(&svg); err != nil || strings.Count(svg.String(), "<polyline") != 3 {
+		t.Errorf("curve svg: %v", err)
+	}
 }
