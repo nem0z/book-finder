@@ -92,7 +92,7 @@ func TestLexical(t *testing.T) {
 
 	e = &Engine{Pool: pool, Embedder: fakeQuery{"fake"}}
 	if res, err := e.Search(ctx, query, Filters{}, 1); err != nil || len(res) != 1 || res[0].ID != "OL1W" {
-		t.Errorf("engine default (vector): %+v, %v", res, err)
+		t.Errorf("engine default without keyword vectors (description vectors): %+v, %v", res, err)
 	}
 
 	// Keyword vectors: OL3W's points the query's way, OL2W's half-way; OL1W and OL4W have none.
@@ -106,6 +106,30 @@ func TestLexical(t *testing.T) {
 	e.Retrieval = RetrieveKeywordVectors
 	if res, err := e.Retrieve(ctx, query, Filters{}, 10); err != nil || len(res) != 2 || res[0].ID != "OL3W" || res[1].ID != "OL2W" || res[0].Similarity <= res[1].Similarity {
 		t.Errorf("keyword vectors: %+v, %v", res, err)
+	}
+
+	// The default: keyword vectors, and works without one by their description vector, by similarity.
+	e.Retrieval = ""
+	vecIDs := func(res []Result, err error) []string {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var out []string
+		for _, r := range res {
+			out = append(out, r.ID)
+		}
+
+		return out
+	}
+
+	if got := vecIDs(e.Retrieve(ctx, query, Filters{}, 10)); !slices.Equal(got, []string{"OL3W", "OL1W", "OL2W", "OL4W"}) {
+		t.Errorf("keyword vectors first: %v", got)
+	}
+
+	if got := vecIDs(e.Retrieve(ctx, query, Filters{}, 2)); !slices.Equal(got, []string{"OL3W", "OL1W"}) {
+		t.Errorf("keyword vectors first, limit: %v", got)
 	}
 
 	e.Retrieval = "other"

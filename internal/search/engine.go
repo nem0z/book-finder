@@ -12,11 +12,15 @@ import (
 type Retrieval string
 
 const (
-	RetrieveVector   Retrieval = "vector"   // nearest EmbeddingGemma vectors (Semantic); the default
-	RetrieveKeywords Retrieval = "keywords" // LLM keywords matching the query's words (Keywords)
-	RetrieveFullText Retrieval = "fulltext" // title, authors, subjects and description matching them (FullText)
-	// nearest vectors of the LLM keywords (KeywordVectors)
-	RetrieveKeywordVectors Retrieval = "keyword-vectors"
+	// RetrieveKeywordVectorsFirst finds the nearest vectors of the LLM keywords, plus works without keywords
+	// by their description vector (KeywordVectorsFirst). The default: on this project's benchmark, keyword
+	// vectors return more relevant books than description vectors.
+	RetrieveKeywordVectorsFirst Retrieval = "keyword-vectors-first"
+
+	RetrieveVector         Retrieval = "vector"          // nearest description vectors (Semantic)
+	RetrieveKeywordVectors Retrieval = "keyword-vectors" // nearest vectors of the LLM keywords only (KeywordVectors)
+	RetrieveKeywords       Retrieval = "keywords"        // LLM keywords matching the query's words (Keywords)
+	RetrieveFullText       Retrieval = "fulltext"        // title, authors, subjects and description matching them (FullText)
 )
 
 var ErrUnknownRetrieval = errors.New("unknown retrieval")
@@ -24,8 +28,8 @@ var ErrUnknownRetrieval = errors.New("unknown retrieval")
 // Engine runs the full search: retrieval, then re-ranking of the best candidates when a re-ranker is set.
 type Engine struct {
 	Pool      *pgxpool.Pool
-	Embedder  QueryEmbedder // used by vector retrieval
-	Retrieval Retrieval     // "" means RetrieveVector
+	Embedder  QueryEmbedder // used by vector retrievals
+	Retrieval Retrieval     // "" means RetrieveKeywordVectorsFirst
 	Reranker  Reranker      // nil: keep the retrieval order
 	// Candidates is how many retrieved works are re-ranked; 0 means DefaultCandidates.
 	Candidates int
@@ -57,7 +61,9 @@ func (e *Engine) Search(ctx context.Context, query string, f Filters, limit int)
 // Retrieve returns the n best candidates for query and f, by e's retrieval.
 func (e *Engine) Retrieve(ctx context.Context, query string, f Filters, n int) ([]Result, error) {
 	switch e.Retrieval {
-	case "", RetrieveVector:
+	case "", RetrieveKeywordVectorsFirst:
+		return KeywordVectorsFirst(ctx, e.Pool, e.Embedder, query, f, n)
+	case RetrieveVector:
 		return Semantic(ctx, e.Pool, e.Embedder, query, f, n)
 	case RetrieveKeywords:
 		return Keywords(ctx, e.Pool, query, f, n)
