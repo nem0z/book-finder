@@ -76,7 +76,10 @@ type Judge struct {
 	// Workers is how many ratings run at once; 0 means 4. PerMinute caps the ratings asked per minute;
 	// 0 means no cap.
 	Workers, PerMinute int
-	Logger             *slog.Logger
+	// DryRun counts the ratings that would be asked (Pending) instead of asking them.
+	DryRun  bool
+	Pending int
+	Logger  *slog.Logger
 
 	mu     sync.Mutex
 	cache  map[string]Judgment
@@ -129,6 +132,11 @@ func (j *Judge) RateAll(ctx context.Context, query string, books []search.Result
 		if _, ok := j.Rating(query, b); !ok {
 			todo = append(todo, b)
 		}
+	}
+
+	if j.DryRun {
+		j.Pending += len(todo)
+		return nil
 	}
 
 	var tick <-chan time.Time

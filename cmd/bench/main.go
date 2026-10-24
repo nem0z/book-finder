@@ -35,7 +35,7 @@ type config struct {
 	sample                    bool
 	rr                        search.Reranker
 
-	judge              bool
+	judge, dryRun      bool
 	cache, queryCache  string
 	workers, perMinute int
 }
@@ -53,6 +53,7 @@ func main() {
 	flag.BoolVar(&c.sample, "sample", false, "search only the works with LLM keywords, in every pipeline")
 	flag.BoolVar(&c.judge, "judge", false, "have an LLM rate the top 100 of vector and keyword retrieval, without re-ranking")
 	flag.StringVar(&c.cache, "judge-cache", "bench-judgments.jsonl", "file the -judge ratings are cached in")
+	flag.BoolVar(&c.dryRun, "judge-dry-run", false, "with -judge, only count the ratings not cached yet")
 	flag.StringVar(&c.queryCache, "query-keywords-cache", "bench-query-keywords.jsonl", "file the -judge query keywords are cached in")
 	flag.IntVar(&c.workers, "concurrency", 4, "-judge ratings asked at once")
 	flag.IntVar(&c.perMinute, "per-minute", 60, "at most this many -judge ratings per minute (0: no cap)")
@@ -131,7 +132,7 @@ func runJudge(ctx context.Context, c config, pool *pgxpool.Pool, emb search.Quer
 	}
 	defer judge.Close()
 
-	judge.Workers, judge.PerMinute = c.workers, c.perMinute
+	judge.Workers, judge.PerMinute, judge.DryRun = c.workers, c.perMinute, c.dryRun
 	qk, err := bench.OpenQueryKeywords(client, lc.Model, c.queryCache)
 	if err != nil {
 		return err
@@ -164,6 +165,11 @@ func runJudge(ctx context.Context, c config, pool *pgxpool.Pool, emb search.Quer
 	rel, err := bench.RunRelevance(ctx, judge, methods, queries)
 	if err != nil {
 		return err
+	}
+
+	if c.dryRun {
+		slog.Info("dry run", "ratings to ask", judge.Pending)
+		return nil
 	}
 
 	cached, asked, failed := judge.Stats()

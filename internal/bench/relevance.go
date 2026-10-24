@@ -10,7 +10,7 @@ import (
 	"github.com/nem0z/book-finder/internal/search"
 )
 
-// Depths are the list lengths ratings are summarised at.
+// Depths are the list lengths ratings are summarised at, and the bands of ranks: 1–10, 11–30 and 31–100.
 var Depths = []int{10, 30, RecallDepth}
 
 // Method is a retrieval compared by RunRelevance.
@@ -122,10 +122,16 @@ func RunRelevance(ctx context.Context, judge *Judge, methods []Method, queries [
 
 // Summarize aggregates method m's top depth results over every query.
 func (r Relevance) Summarize(m, depth int) DepthSummary {
+	return r.SummarizeBand(m, 0, depth)
+}
+
+// SummarizeBand aggregates method m's results ranked from+1 to depth over every query. Found counts the
+// queries whose target is in the top depth.
+func (r Relevance) SummarizeBand(m, from, depth int) DepthSummary {
 	var s DepthSummary
 	var sum, good int
 	for qi, ratings := range r.Ratings[m] {
-		for _, x := range ratings[:min(depth, len(ratings))] {
+		for _, x := range ratings[min(from, len(ratings)):min(depth, len(ratings))] {
 			if x < 0 {
 				s.Unrated++
 				continue
@@ -194,6 +200,7 @@ func (r Relevance) WriteMarkdown(w io.Writer) error {
 	}
 
 	r.writeSummary(&b)
+	r.writeBands(&b)
 	r.writeOverlap(&b)
 	r.writePerQuery(&b)
 
@@ -346,4 +353,27 @@ func latency(ds []time.Duration) (mean, slowest time.Duration) {
 	}
 
 	return (sum / time.Duration(len(ds))).Round(time.Millisecond), slowest.Round(time.Millisecond)
+}
+
+// writeBands writes each method's mean rating and share rated 2 or more per band of ranks.
+func (r Relevance) writeBands(b *strings.Builder) {
+	b.WriteString("\nBy band of ranks: mean rating, and share rated 2 or more.\n\n| Method |")
+	from := 0
+	for _, d := range Depths {
+		fmt.Fprintf(b, " Mean %d–%d | ≥2 %d–%d |", from+1, d, from+1, d)
+		from = d
+	}
+
+	b.WriteString("\n|---|" + strings.Repeat("---|", 2*len(Depths)) + "\n")
+	for m, name := range r.Methods {
+		fmt.Fprintf(b, "| %s |", cell(name))
+		from = 0
+		for _, d := range Depths {
+			s := r.SummarizeBand(m, from, d)
+			fmt.Fprintf(b, " %.2f | %.0f%% |", s.Mean, 100*s.Good)
+			from = d
+		}
+
+		b.WriteString("\n")
+	}
 }

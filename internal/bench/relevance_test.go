@@ -86,6 +86,11 @@ func TestRelevance(t *testing.T) {
 		t.Errorf("summary b at 2: %+v", s)
 	}
 
+	// Ranks 2 and 3 of a: B (2) and C (0).
+	if s := rel.SummarizeBand(0, 1, 3); s.Rated != 2 || s.Mean != 1 || s.Good != 0.5 {
+		t.Errorf("band 2–3 of a: %+v", s)
+	}
+
 	var b strings.Builder
 	rel.Note = "On a sample."
 	if err := rel.WriteMarkdown(&b); err != nil {
@@ -95,6 +100,8 @@ func TestRelevance(t *testing.T) {
 	for _, want := range []string{
 		"> On a sample.\n\n## Summary",
 		"| a | 1.67 | 1.67 | 1.67 | 67% | 67% | 67% | 1 | 1 | 1 |",
+		"| Method | Mean 1–10 | ≥2 1–10 | Mean 11–30 | ≥2 11–30 | Mean 31–100 | ≥2 31–100 |",
+		"| a | 1.67 | 67% | 0.00 | 0% | 0.00 | 0% |",
 		"Works shared by a and b, mean per query: 2.0 of the top 10, 2.0 of the top 30, 2.0 of the top 100.",
 		"Queries where b has a better mean rating than a / a worse one / the same: 0 / 1 / 0 at the top 10,",
 		"| 1 | plot | q1 | 1.67 / 1.67 / 1.67 | 1.00 / 1.00 / 1.00 | 2 |",
@@ -209,5 +216,24 @@ func TestQueryKeywords(t *testing.T) {
 
 	if again, took2, err := q.Get(ctx, "Expat Dutch expat"); err != nil || again != text || took2 != took || fake.calls != 2 {
 		t.Errorf("cached: %q, %v, %v, %d calls", again, took2, err, fake.calls)
+	}
+}
+
+func TestJudgeDryRun(t *testing.T) {
+	llm := &fakeJudge{ratings: map[string]int{"A": 3}}
+	j, err := OpenJudge(llm, "m", filepath.Join(t.TempDir(), "j.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+
+	ctx := context.Background()
+	if err := j.RateAll(ctx, "q", works("A")); err != nil {
+		t.Fatal(err)
+	}
+
+	j.DryRun = true
+	if err := j.RateAll(ctx, "q", works("A", "B", "C")); err != nil || j.Pending != 2 || llm.calls.Load() != 1 {
+		t.Errorf("dry run: %d pending, %d calls, %v", j.Pending, llm.calls.Load(), err)
 	}
 }

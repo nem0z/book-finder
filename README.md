@@ -156,12 +156,12 @@ An LLM rates every result:
 
 The LLM reads the query and the book's title, authors, year and description; the rubric is in
 `internal/bench/judge.go`. The report gives each method's mean rating and share of results rated 2 or more over the
-top 10, 30 and 100, how many known targets each list contains, retrieval times, and, against the first method, how
+top 10, 30 and 100 and per band of ranks (1–10, 11–30, 31–100), how many known targets each list contains, retrieval times, and, against the first method, how
 many works each list shares with it and on how many queries it rates better or worse. An appendix gives the same per query.
 
 A work in several lists is rated once. Ratings are cached in `bench-judgments.jsonl` (`-judge-cache`, git-ignored), keyed
 by model, prompt version, query and book text, so a rerun only rates new pairs. `-concurrency` (default 4) and
-`-per-minute` (default 60) pace the LLM calls. The LLM is set as for `cmd/enrich` (`LLM_PROVIDER`, `LLM_URL`,
+`-per-minute` (default 60) pace the LLM calls, and `-judge-dry-run` only counts the ratings a run would ask. The LLM is set as for `cmd/enrich` (`LLM_PROVIDER`, `LLM_URL`,
 `LLM_MODEL`, `LLM_API_KEY`). A full run makes up to 42 × 400 ratings, fewer when the lists overlap.
 
 ## API
