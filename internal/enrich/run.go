@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -35,6 +36,8 @@ type Options struct {
 	IDs []string
 	// Concurrency is how many requests run at once; 0 means 4.
 	Concurrency int
+	// PerRequest is how many books each request asks about; 0 means 1. See ExtractBatch.
+	PerRequest int
 	// PerMinute caps the requests sent per minute, to share the deployment's quota; 0 means no cap.
 	PerMinute        int
 	ProgressInterval time.Duration // default 15s; negative disables progress logs
@@ -79,6 +82,10 @@ func Extract(ctx context.Context, client llm.Client, b Book) (Keywords, error) {
 func Run(ctx context.Context, pool *pgxpool.Pool, client llm.Client, model string, opts Options) (Stats, error) {
 	if opts.Concurrency <= 0 {
 		opts.Concurrency = defaultConcurrency
+	}
+
+	if opts.PerRequest <= 0 {
+		opts.PerRequest = 1
 	}
 
 	if opts.ProgressInterval == 0 {
@@ -133,32 +140,34 @@ func (r *runner) extractPending(ctx context.Context) error {
 }
 
 // pageSize returns how many works to read next: a full page, fewer near the limit, 0 once it is reached.
+// A page holds at least four rounds of requests, so that few workers wait for the slowest at its end.
 func (r *runner) pageSize() int {
+	size := max(defaultPageSize, 4*r.opts.Concurrency*r.opts.PerRequest)
 	if r.opts.Limit <= 0 {
-		return defaultPageSize
+		return size
 	}
 
-	return min(defaultPageSize, r.opts.Limit-int(r.stats.Considered))
+	return min(size, r.opts.Limit-int(r.stats.Considered))
 }
 
-// extractPage extracts books' keywords concurrently and stores those that succeeded.
+// extractPage extracts books' keywords concurrently, PerRequest books per request, and stores those that
+// succeeded.
 func (r *runner) extractPage(ctx context.Context, books []Book) error {
-	jobs := make(chan Book)
+	jobs := make(chan []Book)
 	var done []Extracted
 	var wg sync.WaitGroup
 	for range r.opts.Concurrency {
 		wg.Go(func() {
-			for b := range jobs {
-				if e, ok := r.extractOne(ctx, b); ok {
-					r.mu.Lock()
-					done = append(done, e)
-					r.mu.Unlock()
-				}
+			for group := range jobs {
+				es := r.extractGroup(ctx, group)
+				r.mu.Lock()
+				done = append(done, es...)
+				r.mu.Unlock()
 			}
 		})
 	}
 
-	err := r.feed(ctx, jobs, books)
+	err := r.feed(ctx, jobs, slices.Collect(slices.Chunk(books, r.opts.PerRequest)))
 	close(jobs)
 	wg.Wait()
 
@@ -181,9 +190,9 @@ func (r *runner) extractPage(ctx context.Context, books []Book) error {
 	return nil
 }
 
-// feed sends books to the workers, at the rate cap, until ctx ends.
-func (r *runner) feed(ctx context.Context, jobs chan<- Book, books []Book) error {
-	for _, b := range books {
+// feed sends groups of books to the workers, one per request at the rate cap, until ctx ends.
+func (r *runner) feed(ctx context.Context, jobs chan<- []Book, groups [][]Book) error {
+	for _, b := range groups {
 		if r.tick != nil {
 			select {
 			case <-r.tick:
@@ -202,22 +211,49 @@ func (r *runner) feed(ctx context.Context, jobs chan<- Book, books []Book) error
 	return nil
 }
 
-func (r *runner) extractOne(ctx context.Context, b Book) (Extracted, bool) {
-	k, err := Extract(ctx, r.client, b)
-	if err != nil {
-		if ctx.Err() == nil {
-			r.opts.Logger.Warn("extraction failed", "err", err)
+// extractGroup extracts the keywords of a group of books in one request. Books the answer misses are asked
+// again one by one, and so are all of them when the request fails or the answer may mix them up. Books
+// that still fail are counted.
+func (r *runner) extractGroup(ctx context.Context, group []Book) []Extracted {
+	ks, err := ExtractBatch(ctx, r.client, group)
+	if ctx.Err() != nil {
+		return nil
+	}
+
+	if err != nil && len(group) > 1 {
+		r.opts.Logger.Warn("extraction failed, asking book by book", "books", len(group), "err", err)
+	}
+
+	var out []Extracted
+	for _, b := range group {
+		k, ok := ks[b.ID]
+		if !ok && len(group) > 1 {
+			var serr error
+			if k, serr = Extract(ctx, r.client, b); serr == nil {
+				ok = true
+			} else {
+				err = serr
+			}
+		}
+
+		if !ok {
+			if ctx.Err() != nil {
+				return out
+			}
+
+			r.opts.Logger.Warn("extraction failed", "work", b.ID, "err", err)
 			r.mu.Lock()
 			r.stats.Failed++
 			r.mu.Unlock()
+
+			continue
 		}
 
-		return Extracted{}, false
+		out = append(out, Extracted{WorkID: b.ID, Hash: b.Hash, Keywords: k})
 	}
 
-	return Extracted{WorkID: b.ID, Hash: b.Hash, Keywords: k}, true
+	return out
 }
-
 func (r *runner) maybeReport() {
 	if r.opts.ProgressInterval > 0 && time.Since(r.last) >= r.opts.ProgressInterval {
 		r.report()
