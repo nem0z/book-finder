@@ -119,7 +119,8 @@ $env:VOYAGE_API_KEY = '<Voyage AI API key>'
   switching, because the template doesn't remove apps and Azure can't drop a workload profile that an app uses).
 - `restore-db.ps1` dumps the local database, uploads it as an image, and restores it with a one-off Container Apps
   job, since the server is only reachable from inside the private network. It replaces what is in the Azure
-  database.
+  database. Run it after `cmd/enrich` and `cmd/embed -keywords`: search uses the keyword vectors
+  (`work_keyword_embeddings`), and works like before (description vectors) on a database without them.
 
 ## Check before deploying
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -23,17 +24,21 @@ const (
 
 var (
 	// semanticSQL searches the vectors of the descriptions.
-	semanticSQL = nearestSQL("work_embeddings")
+	semanticSQL = nearestSQL("work_embeddings", "")
 
 	// keywordVectorSQL searches the vectors of the LLM keywords.
-	keywordVectorSQL = nearestSQL("work_keyword_embeddings")
+	keywordVectorSQL = nearestSQL("work_keyword_embeddings", "")
+
+	// unindexedSQL keeps, of the works whose description vector is nearest, those without a keyword vector.
+	unindexedSQL = nearestSQL("work_embeddings",
+		"WHERE NOT EXISTS (SELECT 1 FROM work_keyword_embeddings k WHERE k.work_id = nearest.id AND k.model = $2)")
 )
 
 // nearestSQL returns the $8 works whose vector in table, computed by model $2, is nearest to the $1 vector
-// (among the $9 works, when not NULL). Filters are applied while walking the HNSW index (pgvector iterative
-// scans), so strict filters still return up to $8 results. relaxed_order may return rows slightly out of
-// order, hence the outer sort.
-func nearestSQL(table string) string {
+// (among the $9 works, when not NULL), then keeps those matching where, when set. Filters are applied while
+// walking the HNSW index (pgvector iterative scans), so strict filters still return up to $8 results.
+// relaxed_order may return rows slightly out of order, hence the outer sort.
+func nearestSQL(table, where string) string {
 	return `
 WITH nearest AS MATERIALIZED (
     SELECT w.id, w.title, w.author_names, coalesce(w.first_publish_year, 0) AS year,
@@ -55,6 +60,7 @@ WITH nearest AS MATERIALIZED (
 SELECT id, title, author_names, year, pages, lang, description, genres, subjects, cover_id, rating_count,
        1 - distance
 FROM nearest
+` + where + `
 ORDER BY distance`
 }
 
@@ -93,16 +99,44 @@ type Result struct {
 
 // Semantic returns up to limit works whose description vector is closest to the query's and that match f.
 func Semantic(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query string, f Filters, limit int) ([]Result, error) {
-	return nearest(ctx, pool, semanticSQL, emb, query, f, limit)
+	lists, err := nearest(ctx, pool, emb, query, f, limit, semanticSQL)
+	if err != nil {
+		return nil, err
+	}
+
+	return lists[0], nil
 }
 
 // KeywordVectors returns up to limit works whose LLM keywords' vector (work_keyword_embeddings) is closest to
 // the query's and that match f.
 func KeywordVectors(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query string, f Filters, limit int) ([]Result, error) {
-	return nearest(ctx, pool, keywordVectorSQL, emb, query, f, limit)
+	lists, err := nearest(ctx, pool, emb, query, f, limit, keywordVectorSQL)
+	if err != nil {
+		return nil, err
+	}
+
+	return lists[0], nil
 }
 
-func nearest(ctx context.Context, pool *pgxpool.Pool, sql string, emb QueryEmbedder, query string, f Filters, limit int) ([]Result, error) {
+// KeywordVectorsFirst returns up to limit works matching f, by keyword vector, which finds more relevant
+// books than the description vector: the works whose keyword vector is closest to the query's, plus the
+// works without keywords among those whose description vector is closest, merged by similarity. Works
+// without keywords stay findable, and while keywords cover the whole catalogue, the second list is
+// (nearly) empty.
+func KeywordVectorsFirst(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query string, f Filters, limit int) ([]Result, error) {
+	lists, err := nearest(ctx, pool, emb, query, f, limit, keywordVectorSQL, unindexedSQL)
+	if err != nil {
+		return nil, err
+	}
+
+	out := append(lists[0], lists[1]...)
+	slices.SortStableFunc(out, func(a, b Result) int { return cmpDesc(a.Similarity, b.Similarity) })
+
+	return out[:min(limit, len(out))], nil
+}
+
+// nearest embeds query and returns, for each of sqls (nearestSQL queries), up to limit works matching f.
+func nearest(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query string, f Filters, limit int, sqls ...string) ([][]Result, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, ErrEmptyQuery
 	}
@@ -126,14 +160,22 @@ func nearest(ctx context.Context, pool *pgxpool.Pool, sql string, emb QueryEmbed
 		return nil, err
 	}
 
-	rows, err := tx.Query(ctx, sql, embed.VectorLiteral(vec), emb.Model(), f.MinYear, f.MaxYear,
-		f.MinPages, f.MaxPages, f.OriginalLanguage, limit, f.ids())
-	if err != nil {
-		return nil, fmt.Errorf("search: %w", err)
-	}
-	defer rows.Close()
+	lists := make([][]Result, len(sqls))
+	for i, sql := range sqls {
+		rows, err := tx.Query(ctx, sql, embed.VectorLiteral(vec), emb.Model(), f.MinYear, f.MaxYear,
+			f.MinPages, f.MaxPages, f.OriginalLanguage, limit, f.ids())
+		if err != nil {
+			return nil, fmt.Errorf("search: %w", err)
+		}
 
-	return scanResults(rows, func(r *Result) *float64 { return &r.Similarity })
+		lists[i], err = scanResults(rows, func(r *Result) *float64 { return &r.Similarity })
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return lists, nil
 }
 
 // ids returns f.IDs for SQL: NULL, meaning no constraint, when there are none.

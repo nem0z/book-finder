@@ -77,7 +77,8 @@ go run ./cmd/search "a melancholic story about memory and loss"
 go run ./cmd/search -max-year 1980 -lang jpn -n 5 "a lonely man drifting through life"
 ```
 
-Finds the 30 books whose vector is closest to the query's (`-candidates`), then re-orders them with a re-ranker
+Finds the 30 books closest in meaning to the query (`-candidates`), by default by comparing the query's vector with the
+vector of each book's LLM keywords (see `-retrieval`), then re-orders them with a re-ranker
 that reads the query and each book together, and prints the best 10 (`-n`). Optional filters on first
 publication year, page count and original language; `-json` for machine-readable output. Only works with a
 vector are searched.
@@ -87,8 +88,17 @@ The re-ranker is [Voyage AI](https://docs.voyageai.com/docs/reranker)'s `rerank-
 `gte-reranker-modernbert-base` in the `reranker` service of `docker-compose.yml` (`-reranker` or `RERANKER_URL`),
 which adds about 3 s per search on a 16-core CPU. `-no-rerank` skips re-ranking and keeps the retrieval order.
 
-`-retrieval` chooses how candidates are found, before re-ranking:
-- `vector` (default): the nearest vectors.
+`-retrieval` (or `RETRIEVAL`) chooses how candidates are found, before re-ranking:
+- `keyword-vectors-first` (default):
+  - the books whose keyword vector (`cmd/enrich`, then `cmd/embed -keywords`) is nearest to the query's;
+  - plus, among the books whose description vector is nearest, those without a keyword vector;
+  - merged by similarity.
+
+  Books without keywords stay findable, and without any keyword vector (e.g. before `cmd/enrich`) it works like
+  `vector`. On the [benchmark](#relevance-of-the-retrieved-books), keyword vectors returned more relevant books than
+  description vectors: a mean rating of 1.51 vs 1.31 over the top 10.
+- `vector`: the nearest description vectors.
+- `keyword-vectors`: the nearest keyword vectors only.
 - `keywords`: the works whose LLM keywords (`work_keywords`) best match the query's words.
 - `fulltext`: the same keyword match on the title, authors, subjects and description.
 
@@ -164,9 +174,9 @@ curl "http://localhost:8080/search?q=a+young+bride+haunted+by+her+husband's+dead
 Or in Docker, with the other services: `docker compose up -d api` (rebuild after code changes with
 `docker compose up -d --build api`).
 
-`GET /search?q=<description>` returns the 10 best matches (vector search, then re-ranking) as JSON: title,
+`GET /search?q=<description>` returns the 10 best matches (retrieval as in `cmd/search`, then re-ranking) as JSON: title,
 authors, year, pages, full description, tags, cover URL and Open Library link. Flags: `-addr`
-(default `localhost:8080`), `-no-rerank`, and the same `-db`, `-ollama`, `-reranker` and `-voyage-model` as
+(default `localhost:8080`), `-no-rerank`, and the same `-retrieval`, `-db`, `-ollama`, `-reranker` and `-voyage-model` as
 `cmd/search`.
 
 ## Web app
