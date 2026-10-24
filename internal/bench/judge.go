@@ -1,7 +1,6 @@
 package bench
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -89,30 +88,15 @@ type Judge struct {
 // OpenJudge returns a judge asking client (model is its model, part of the cache key) and caching ratings
 // in the file at path, created if needed.
 func OpenJudge(client llm.Client, model, path string) (*Judge, error) {
-	j := &Judge{client: client, model: model, cache: map[string]Judgment{}}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o644)
+	f, judgments, err := openJSONL[Judgment](path)
 	if err != nil {
 		return nil, err
 	}
 
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64*1024), 1024*1024)
-	for line := 1; sc.Scan(); line++ {
-		var jd Judgment
-		if err := json.Unmarshal(sc.Bytes(), &jd); err != nil {
-			f.Close()
-			return nil, fmt.Errorf("%s:%d: %w", path, line, err)
-		}
-
+	j := &Judge{client: client, model: model, cache: map[string]Judgment{}, file: f}
+	for _, jd := range judgments {
 		j.cache[jd.Key] = jd
 	}
-
-	if err := sc.Err(); err != nil {
-		f.Close()
-		return nil, err
-	}
-
-	j.file = f
 
 	return j, nil
 }

@@ -1,6 +1,7 @@
 // Command bench measures how well each search pipeline finds known books, and prints a Markdown
-// report: see internal/bench. With -judge, it has an LLM rate the top 100 of vector and keyword retrieval instead,
-// without re-ranking; the LLM is set by LLM_PROVIDER, LLM_URL, LLM_MODEL and LLM_API_KEY.
+// report: see internal/bench. With -judge, it has an LLM rate the top 100 of each retrieval instead, without
+// re-ranking (vector, keywords, and the vectors of the LLM keywords searched with the query or with the query's
+// LLM keywords); the LLM is set by LLM_PROVIDER, LLM_URL, LLM_MODEL and LLM_API_KEY.
 //
 //	go run ./cmd/bench > bench.md
 //	go run ./cmd/bench -sample -judge -o relevance.md
@@ -35,7 +36,7 @@ type config struct {
 	rr                        search.Reranker
 
 	judge              bool
-	cache              string
+	cache, queryCache  string
 	workers, perMinute int
 }
 
@@ -52,6 +53,7 @@ func main() {
 	flag.BoolVar(&c.sample, "sample", false, "search only the works with LLM keywords, in every pipeline")
 	flag.BoolVar(&c.judge, "judge", false, "have an LLM rate the top 100 of vector and keyword retrieval, without re-ranking")
 	flag.StringVar(&c.cache, "judge-cache", "bench-judgments.jsonl", "file the -judge ratings are cached in")
+	flag.StringVar(&c.queryCache, "query-keywords-cache", "bench-query-keywords.jsonl", "file the -judge query keywords are cached in")
 	flag.IntVar(&c.workers, "concurrency", 4, "-judge ratings asked at once")
 	flag.IntVar(&c.perMinute, "per-minute", 60, "at most this many -judge ratings per minute (0: no cap)")
 	flag.Parse()
@@ -130,9 +132,32 @@ func runJudge(ctx context.Context, c config, pool *pgxpool.Pool, emb search.Quer
 	defer judge.Close()
 
 	judge.Workers, judge.PerMinute = c.workers, c.perMinute
+	qk, err := bench.OpenQueryKeywords(client, lc.Model, c.queryCache)
+	if err != nil {
+		return err
+	}
+	defer qk.Close()
+
+	keywordVectors := retriever(pool, emb, search.RetrieveKeywordVectors, f)
 	methods := []bench.Method{
 		{Name: "vector", Retrieve: retriever(pool, emb, search.RetrieveVector, f)},
 		{Name: "keywords", Retrieve: retriever(pool, emb, search.RetrieveKeywords, f)},
+		{Name: "keyword-vectors", Retrieve: keywordVectors},
+		{
+			Name: "keyword-vectors-llm",
+			Prepare: func(ctx context.Context, query string) (time.Duration, error) {
+				_, took, err := qk.Get(ctx, query)
+				return took, err
+			},
+			Retrieve: func(ctx context.Context, query string, n int) ([]search.Result, error) {
+				text, _, err := qk.Get(ctx, query)
+				if err != nil {
+					return nil, err
+				}
+
+				return keywordVectors(ctx, text, n)
+			},
+		},
 	}
 
 	start := time.Now()

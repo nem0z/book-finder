@@ -10,7 +10,10 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/nem0z/book-finder/internal/enrich"
+	"github.com/nem0z/book-finder/internal/llm"
 	"github.com/nem0z/book-finder/internal/search"
 )
 
@@ -51,7 +54,9 @@ func TestRelevance(t *testing.T) {
 	llm := &fakeJudge{ratings: map[string]int{"A": 3, "B": 2, "C": 0, "E": 7}}
 	lists := map[string][]search.Result{"q1": works("A", "B", "C", "E")}
 	other := map[string][]search.Result{"q1": works("B", "C", "D")}
-	methods := []Method{{Name: "a", Retrieve: retrieve(lists)}, {Name: "b", Retrieve: retrieve(other)}}
+	prepared := 0
+	prepare := func(context.Context, string) (time.Duration, error) { prepared++; return time.Hour, nil }
+	methods := []Method{{Name: "a", Retrieve: retrieve(lists)}, {Name: "b", Retrieve: retrieve(other), Prepare: prepare}}
 	queries := []Query{{Query: "q1", Kind: "plot", Title: "C", Targets: []string{"C"}}}
 
 	j, err := OpenJudge(llm, "m", cache)
@@ -67,6 +72,10 @@ func TestRelevance(t *testing.T) {
 	// D fails and E's rating is out of range: both are unrated.
 	if cached, asked, failed := j.Stats(); cached != 3 || asked != 5 || failed != 2 || llm.calls.Load() != 5 {
 		t.Errorf("stats: %d cached, %d asked, %d failed, %d calls", cached, asked, failed, llm.calls.Load())
+	}
+
+	if prepared != 2 || rel.Latency[1][0] < time.Hour || rel.Latency[0][0] >= time.Hour {
+		t.Errorf("prepare: %d calls, latencies %v", prepared, rel.Latency)
 	}
 
 	if s := rel.Summarize(0, 10); s.Rated != 3 || s.Unrated != 1 || s.Mean != 5.0/3 || s.Good != 2.0/3 || s.Found != 1 {
@@ -87,6 +96,7 @@ func TestRelevance(t *testing.T) {
 		"> On a sample.\n\n## Summary",
 		"| a | 1.67 | 1.67 | 1.67 | 67% | 67% | 67% | 1 | 1 | 1 |",
 		"Works shared by a and b, mean per query: 2.0 of the top 10, 2.0 of the top 30, 2.0 of the top 100.",
+		"Queries where b has a better mean rating than a / a worse one / the same: 0 / 1 / 0 at the top 10,",
 		"| 1 | plot | q1 | 1.67 / 1.67 / 1.67 | 1.00 / 1.00 / 1.00 | 2 |",
 	} {
 		if !strings.Contains(b.String(), want) {
@@ -147,5 +157,57 @@ func TestJudgeMessage(t *testing.T) {
 
 	if got := judgeMessage("q", search.Result{Title: "T", Description: strings.Repeat("word ", 1000)}); len(got) > 2100 {
 		t.Errorf("description not cut: %d bytes", len(got))
+	}
+}
+
+// fakeQueryLLM answers with the query's words as keywords, or nothing for "empty".
+type fakeQueryLLM struct{ calls int }
+
+func (f *fakeQueryLLM) JSON(_ context.Context, system, user, _ string, _ json.RawMessage, out any) error {
+	f.calls++
+	if system != enrich.QueryPrompt {
+		return errors.New("unexpected prompt")
+	}
+
+	words := strings.Fields(user)
+	if user == "empty" {
+		words = nil
+	}
+
+	k := out.(*enrich.Keywords)
+	*k = enrich.Keywords{Keywords: words, Places: []string{"Amsterdam, Netherlands"}, EraLabel: "2020s"}
+	if words == nil {
+		*k = enrich.Keywords{}
+	}
+
+	return nil
+}
+
+func TestQueryKeywords(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "q.jsonl")
+	fake := &fakeQueryLLM{}
+	q, err := OpenQueryKeywords(fake, "m", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text, took, err := q.Get(ctx, "Expat Dutch expat")
+	if err != nil || text != "expat; dutch; Amsterdam, Netherlands; 2020s" {
+		t.Errorf("got %q, %v, %v", text, took, err)
+	}
+
+	if _, _, err := q.Get(ctx, "empty"); !errors.Is(err, llm.ErrBadResponse) {
+		t.Errorf("no keywords: %v", err)
+	}
+
+	q.Close()
+	if q, err = OpenQueryKeywords(fake, "m", path); err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+
+	if again, took2, err := q.Get(ctx, "Expat Dutch expat"); err != nil || again != text || took2 != took || fake.calls != 2 {
+		t.Errorf("cached: %q, %v, %v, %d calls", again, took2, err, fake.calls)
 	}
 }

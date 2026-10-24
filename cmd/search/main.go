@@ -27,7 +27,7 @@ func main() {
 	reranker := flag.String("reranker", envOr("RERANKER_URL", rerank.DefaultURL), "local re-ranker URL, used without VOYAGE_API_KEY (env RERANKER_URL)")
 	voyageModel := flag.String("voyage-model", envOr("VOYAGE_MODEL", rerank.DefaultVoyageModel), "Voyage re-ranker, used when VOYAGE_API_KEY is set (env VOYAGE_MODEL)")
 	noRerank := flag.Bool("no-rerank", false, "keep the retrieval order")
-	retrieval := flag.String("retrieval", string(search.RetrieveVector), "how candidates are found: vector, keywords (LLM keywords) or fulltext")
+	retrieval := flag.String("retrieval", string(search.RetrieveVector), "how candidates are found: vector, keywords (LLM keywords), keyword-vectors (vectors of the LLM keywords) or fulltext")
 	candidates := flag.Int("candidates", search.DefaultCandidates, "retrieved works passed to the re-ranker")
 	limit := flag.Int("n", search.DefaultLimit, "number of results")
 	asJSON := flag.Bool("json", false, "print the results as JSON")

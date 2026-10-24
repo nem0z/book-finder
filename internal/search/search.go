@@ -21,16 +21,26 @@ const (
 	efSearch = 200
 )
 
-// semanticSQL returns the $8 works nearest to the $1 vector computed by model $2 (among the $9 works, when
-// not NULL). Filters are applied while walking the HNSW index (pgvector iterative scans), so strict filters
-// still return up to $8 results. relaxed_order may return rows slightly out of order, hence the outer sort.
-const semanticSQL = `
+var (
+	// semanticSQL searches the vectors of the descriptions.
+	semanticSQL = nearestSQL("work_embeddings")
+
+	// keywordVectorSQL searches the vectors of the LLM keywords.
+	keywordVectorSQL = nearestSQL("work_keyword_embeddings")
+)
+
+// nearestSQL returns the $8 works whose vector in table, computed by model $2, is nearest to the $1 vector
+// (among the $9 works, when not NULL). Filters are applied while walking the HNSW index (pgvector iterative
+// scans), so strict filters still return up to $8 results. relaxed_order may return rows slightly out of
+// order, hence the outer sort.
+func nearestSQL(table string) string {
+	return `
 WITH nearest AS MATERIALIZED (
     SELECT w.id, w.title, w.author_names, coalesce(w.first_publish_year, 0) AS year,
            coalesce(w.page_count, 0) AS pages, coalesce(w.original_language, '') AS lang,
            w.description, w.genres, w.subjects, coalesce(w.cover_id, 0) AS cover_id, w.rating_count,
            e.embedding <=> $1::halfvec AS distance
-    FROM work_embeddings e
+    FROM ` + table + ` e
     JOIN works w ON w.id = e.work_id
     WHERE e.model = $2
       AND ($3 = 0 OR w.first_publish_year >= $3)
@@ -46,6 +56,7 @@ SELECT id, title, author_names, year, pages, lang, description, genres, subjects
        1 - distance
 FROM nearest
 ORDER BY distance`
+}
 
 var ErrEmptyQuery = errors.New("empty query")
 
@@ -75,13 +86,23 @@ type Result struct {
 	Tags             []string `json:"tags"`               // genres then subjects, without generic ones
 	CoverID          int64    `json:"cover_id,omitempty"` // Open Library cover ID
 	RatingCount      int      `json:"rating_count"`
-	Similarity       float64  `json:"similarity"`              // cosine similarity, 1 = same direction; set by Semantic
+	Similarity       float64  `json:"similarity"`              // cosine similarity, 1 = same direction; set by Semantic and KeywordVectors
 	LexicalScore     float64  `json:"lexical_score,omitempty"` // BM25 score; set by Keywords and FullText
 	RerankScore      float64  `json:"rerank_score,omitempty"`  // set by Rerank; higher is more relevant
 }
 
-// Semantic returns up to limit works whose vector is closest to the query's and that match f.
+// Semantic returns up to limit works whose description vector is closest to the query's and that match f.
 func Semantic(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query string, f Filters, limit int) ([]Result, error) {
+	return nearest(ctx, pool, semanticSQL, emb, query, f, limit)
+}
+
+// KeywordVectors returns up to limit works whose LLM keywords' vector (work_keyword_embeddings) is closest to
+// the query's and that match f.
+func KeywordVectors(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query string, f Filters, limit int) ([]Result, error) {
+	return nearest(ctx, pool, keywordVectorSQL, emb, query, f, limit)
+}
+
+func nearest(ctx context.Context, pool *pgxpool.Pool, sql string, emb QueryEmbedder, query string, f Filters, limit int) ([]Result, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, ErrEmptyQuery
 	}
@@ -105,7 +126,7 @@ func Semantic(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query 
 		return nil, err
 	}
 
-	rows, err := tx.Query(ctx, semanticSQL, embed.VectorLiteral(vec), emb.Model(), f.MinYear, f.MaxYear,
+	rows, err := tx.Query(ctx, sql, embed.VectorLiteral(vec), emb.Model(), f.MinYear, f.MaxYear,
 		f.MinPages, f.MaxPages, f.OriginalLanguage, limit, f.ids())
 	if err != nil {
 		return nil, fmt.Errorf("search: %w", err)

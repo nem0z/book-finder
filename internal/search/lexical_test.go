@@ -12,7 +12,7 @@ import (
 func TestLexical(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx, "TRUNCATE work_keywords"); err != nil {
+	if _, err := pool.Exec(ctx, "TRUNCATE work_keywords, work_keyword_embeddings"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -93,6 +93,19 @@ func TestLexical(t *testing.T) {
 	e = &Engine{Pool: pool, Embedder: fakeQuery{"fake"}}
 	if res, err := e.Search(ctx, query, Filters{}, 1); err != nil || len(res) != 1 || res[0].ID != "OL1W" {
 		t.Errorf("engine default (vector): %+v, %v", res, err)
+	}
+
+	// Keyword vectors: OL3W's points the query's way, OL2W's half-way; OL1W and OL4W have none.
+	for id, v := range map[string][]float32{"OL3W": axis(1, 1), "OL2W": axis(1, 0.5)} {
+		if _, err := pool.Exec(ctx, "INSERT INTO work_keyword_embeddings (work_id, model, content_hash, embedding) VALUES ($1, 'fake', 'h', $2::halfvec)",
+			id, embed.VectorLiteral(v)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	e.Retrieval = RetrieveKeywordVectors
+	if res, err := e.Retrieve(ctx, query, Filters{}, 10); err != nil || len(res) != 2 || res[0].ID != "OL3W" || res[1].ID != "OL2W" || res[0].Similarity <= res[1].Similarity {
+		t.Errorf("keyword vectors: %+v, %v", res, err)
 	}
 
 	e.Retrieval = "other"
