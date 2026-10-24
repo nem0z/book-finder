@@ -27,6 +27,7 @@ func main() {
 	ids := flag.String("ids", "", "only these works: comma-separated Open Library IDs, or @file with one per line")
 	concurrency := flag.Int("concurrency", 4, "requests at once")
 	perMinute := flag.Int("per-minute", 0, "at most this many requests per minute (0: no cap)")
+	perRequest := flag.Int("per-request", 1, "books per request")
 	flag.Parse()
 
 	c := llm.Config{Provider: envOr("LLM_PROVIDER", llm.ProviderAzure), URL: os.Getenv("LLM_URL"),
@@ -35,7 +36,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	opts := enrich.Options{Limit: *limit, Concurrency: *concurrency, PerMinute: *perMinute}
+	opts := enrich.Options{Limit: *limit, Concurrency: *concurrency, PerMinute: *perMinute, PerRequest: *perRequest}
 	if err := run(ctx, *url, c, *ids, opts); err != nil {
 		slog.Error("enrich failed", "err", err)
 		os.Exit(1)
