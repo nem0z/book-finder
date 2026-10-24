@@ -36,6 +36,8 @@ type config struct {
 	rr                        search.Reranker
 
 	judge, dryRun      bool
+	rerankEffect       bool
+	svg                string
 	cache, queryCache  string
 	workers, perMinute int
 }
@@ -57,9 +59,11 @@ func main() {
 	flag.StringVar(&c.queryCache, "query-keywords-cache", "bench-query-keywords.jsonl", "file the -judge query keywords are cached in")
 	flag.IntVar(&c.workers, "concurrency", 4, "-judge ratings asked at once")
 	flag.IntVar(&c.perMinute, "per-minute", 60, "at most this many -judge ratings per minute (0: no cap)")
+	flag.BoolVar(&c.rerankEffect, "rerank-effect", false, "show what the re-ranker does to the top 100 of keyword-vector retrieval, re-ranking the top 30 or all 100, with -judge's ratings")
+	flag.StringVar(&c.svg, "svg", "", "with -rerank-effect, also draw each variant as <svg>-<depth>.svg")
 	flag.Parse()
 
-	if !*noRerank && !c.judge {
+	if !*noRerank && (!c.judge || c.rerankEffect) {
 		var name string
 		c.rr, name = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
 		slog.Info("re-ranker", "name", name)
@@ -96,6 +100,10 @@ func run(ctx context.Context, c config) error {
 	}
 
 	emb := embed.NewOllama(c.ollama, embed.DefaultModel)
+	if c.rerankEffect {
+		return runRerankEffect(ctx, c, pool, emb, f, note, queries)
+	}
+
 	if c.judge {
 		return runJudge(ctx, c, pool, emb, f, note, queries)
 	}
@@ -112,27 +120,81 @@ func run(ctx context.Context, c config) error {
 	return write(c.out, rep.WriteMarkdown)
 }
 
-// runJudge has an LLM rate the top 100 of vector and keyword retrieval for every query.
-func runJudge(ctx context.Context, c config, pool *pgxpool.Pool, emb search.QueryEmbedder, f search.Filters, note string, queries []bench.Query) error {
+// openJudge returns the LLM set by LLM_PROVIDER, LLM_URL, LLM_MODEL and LLM_API_KEY, a judge asking it with
+// c's settings, and a function that closes both.
+func openJudge(c config) (llm.Client, llm.Config, *bench.Judge, func(), error) {
 	lc := llm.Config{Provider: envOr("LLM_PROVIDER", llm.ProviderAzure), URL: os.Getenv("LLM_URL"),
 		Model: os.Getenv("LLM_MODEL"), APIKey: os.Getenv("LLM_API_KEY")}
 	client, err := llm.New(lc)
 	if err != nil {
-		return err
+		return nil, lc, nil, nil, err
 	}
 
 	// The Copilot client runs a child process.
+	closeClient := func() {}
 	if closer, ok := client.(io.Closer); ok {
-		defer closer.Close()
+		closeClient = func() { closer.Close() }
 	}
 
 	judge, err := bench.OpenJudge(client, lc.Model, c.cache)
 	if err != nil {
-		return err
+		closeClient()
+		return nil, lc, nil, nil, err
 	}
-	defer judge.Close()
 
 	judge.Workers, judge.PerMinute, judge.DryRun = c.workers, c.perMinute, c.dryRun
+
+	return client, lc, judge, func() { judge.Close(); closeClient() }, nil
+}
+
+// runRerankEffect re-ranks the top 30 and all 100 of keyword-vector retrieval for every query, and reports
+// how the judge's ratings move.
+func runRerankEffect(ctx context.Context, c config, pool *pgxpool.Pool, emb search.QueryEmbedder, f search.Filters, note string, queries []bench.Query) error {
+	if c.rr == nil {
+		return errors.New("-rerank-effect needs a re-ranker")
+	}
+
+	_, lc, judge, closeAll, err := openJudge(c)
+	if err != nil {
+		return err
+	}
+	defer closeAll()
+
+	start := time.Now()
+	depths := []int{search.DefaultCandidates, bench.RecallDepth}
+	e, err := bench.RunRerankEffect(ctx, judge, c.rr, retriever(pool, emb, search.RetrieveKeywordVectors, f), queries, depths)
+	if err != nil {
+		return err
+	}
+
+	if c.dryRun {
+		slog.Info("dry run", "ratings to ask", judge.Pending)
+		return nil
+	}
+
+	cached, asked, failed := judge.Stats()
+	e.Note = fmt.Sprintf("%s Keyword-vector retrieval, query as typed. Ratings by %s (%s): %d cached, %d asked in this "+
+		"run, %d failed.", note, lc.Model, lc.Provider, cached, asked, failed)
+	slog.Info("bench finished", "queries", len(queries), "took", time.Since(start).Round(time.Second))
+
+	if c.svg != "" {
+		for v, d := range depths {
+			if err := write(fmt.Sprintf("%s-%d.svg", c.svg, d), func(w io.Writer) error { return e.WriteSVG(w, v) }); err != nil {
+				return err
+			}
+		}
+	}
+
+	return write(c.out, e.WriteMarkdown)
+}
+
+// runJudge has an LLM rate the top 100 of vector and keyword retrieval for every query.
+func runJudge(ctx context.Context, c config, pool *pgxpool.Pool, emb search.QueryEmbedder, f search.Filters, note string, queries []bench.Query) error {
+	client, lc, judge, closeAll, err := openJudge(c)
+	if err != nil {
+		return err
+	}
+	defer closeAll()
 	qk, err := bench.OpenQueryKeywords(client, lc.Model, c.queryCache)
 	if err != nil {
 		return err
