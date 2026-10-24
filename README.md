@@ -164,6 +164,22 @@ by model, prompt version, query and book text, so a rerun only rates new pairs. 
 `-per-minute` (default 60) pace the LLM calls, and `-judge-dry-run` only counts the ratings a run would ask. The LLM is set as for `cmd/enrich` (`LLM_PROVIDER`, `LLM_URL`,
 `LLM_MODEL`, `LLM_API_KEY`). A full run makes up to 42 × 400 ratings, fewer when the lists overlap.
 
+### Effect of the re-ranker
+
+```sh
+go run ./cmd/bench -rerank-effect -svg rerank -o rerank.md
+```
+
+Takes the top 100 of keyword-vector retrieval for each query and re-ranks its top 30, as the search does, or all 100.
+It uses the `-judge` ratings (same cache, same LLM settings) to report, before and after re-ranking:
+- the mean rating and share rated 2 or more per band of ranks (1–10, 11–30, 31–100);
+- nDCG@10;
+- how many books, relevant ones and irrelevant ones move from each band to each other band;
+- the biggest moves, the known targets' ranks, the change per query and re-rank times.
+
+`-svg rerank` also draws `rerank-30.svg` and `rerank-100.svg` (rank before vs after, coloured by rating) and
+`rerank-curve.svg` (mean rating at each rank). With the local re-ranker, a run takes about 8 minutes.
+
 ## API
 
 ```sh
