@@ -15,6 +15,8 @@ const (
 	RetrieveVector   Retrieval = "vector"   // nearest EmbeddingGemma vectors (Semantic); the default
 	RetrieveKeywords Retrieval = "keywords" // LLM keywords matching the query's words (Keywords)
 	RetrieveFullText Retrieval = "fulltext" // title, authors, subjects and description matching them (FullText)
+	// nearest vectors of the LLM keywords (KeywordVectors)
+	RetrieveKeywordVectors Retrieval = "keyword-vectors"
 )
 
 var ErrUnknownRetrieval = errors.New("unknown retrieval")
@@ -61,6 +63,8 @@ func (e *Engine) Retrieve(ctx context.Context, query string, f Filters, n int) (
 		return Keywords(ctx, e.Pool, query, f, n)
 	case RetrieveFullText:
 		return FullText(ctx, e.Pool, query, f, n)
+	case RetrieveKeywordVectors:
+		return KeywordVectors(ctx, e.Pool, e.Embedder, query, f, n)
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownRetrieval, e.Retrieval)
 	}

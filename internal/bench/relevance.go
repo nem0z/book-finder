@@ -17,6 +17,9 @@ var Depths = []int{10, 30, RecallDepth}
 type Method struct {
 	Name     string
 	Retrieve RetrieveFunc
+	// Prepare, when set, runs before each timed retrieval, e.g. to have an LLM read the query. The time it
+	// returns is added to the retrieval time.
+	Prepare func(ctx context.Context, query string) (time.Duration, error)
 }
 
 // Relevance holds each method's top RecallDepth per query, as retrieved, and the judge's rating of each
@@ -53,6 +56,12 @@ func RunRelevance(ctx context.Context, judge *Judge, methods []Method, queries [
 	// Untimed first call: the first query embedding loads the model, the first SQL warms the caches.
 	if len(queries) > 0 {
 		for _, m := range methods {
+			if m.Prepare != nil {
+				if _, err := m.Prepare(ctx, queries[0].Query); err != nil {
+					return rel, fmt.Errorf("%s: %w", m.Name, err)
+				}
+			}
+
 			if _, err := m.Retrieve(ctx, queries[0].Query, RecallDepth); err != nil {
 				return rel, fmt.Errorf("%s: %w", m.Name, err)
 			}
@@ -63,13 +72,21 @@ func RunRelevance(ctx context.Context, judge *Judge, methods []Method, queries [
 		var union []search.Result
 		seen := map[string]bool{}
 		for mi, m := range methods {
+			var extra time.Duration
+			if m.Prepare != nil {
+				var err error
+				if extra, err = m.Prepare(ctx, q.Query); err != nil {
+					return rel, fmt.Errorf("%s, %q: %w", m.Name, q.Query, err)
+				}
+			}
+
 			start := time.Now()
 			list, err := m.Retrieve(ctx, q.Query, RecallDepth)
 			if err != nil {
 				return rel, fmt.Errorf("%s, %q: %w", m.Name, q.Query, err)
 			}
 
-			rel.Latency[mi] = append(rel.Latency[mi], time.Since(start))
+			rel.Latency[mi] = append(rel.Latency[mi], time.Since(start)+extra)
 			rel.Lists[mi] = append(rel.Lists[mi], list)
 			for _, b := range list {
 				if !seen[b.ID] {
@@ -231,29 +248,55 @@ func (r Relevance) writeSummary(b *strings.Builder) {
 	}
 }
 
+// writeOverlap writes how many works each method shares with the first one, and how many queries it rates
+// better or worse than the first one.
 func (r Relevance) writeOverlap(b *strings.Builder) {
-	for a := range r.Methods {
-		for c := a + 1; c < len(r.Methods); c++ {
-			fmt.Fprintf(b, "\nWorks shared by %s and %s, mean per query:", r.Methods[a], r.Methods[c])
-			for i, d := range Depths {
-				total := 0
-				for qi := range r.Queries {
-					total += r.overlap(a, c, qi, d)
-				}
-
-				sep := ","
-				if i == len(Depths)-1 {
-					sep = "."
-				}
-
-				fmt.Fprintf(b, " %.1f of the top %d%s", float64(total)/float64(len(r.Queries)), d, sep)
+	for c := 1; c < len(r.Methods); c++ {
+		fmt.Fprintf(b, "\nWorks shared by %s and %s, mean per query:", r.Methods[0], r.Methods[c])
+		for i, d := range Depths {
+			total := 0
+			for qi := range r.Queries {
+				total += r.overlap(0, c, qi, d)
 			}
 
-			b.WriteString("\n")
+			fmt.Fprintf(b, " %.1f of the top %d%s", float64(total)/float64(len(r.Queries)), d, listSep(i, len(Depths)))
 		}
+
+		fmt.Fprintf(b, "\nQueries where %s has a better mean rating than %s / a worse one / the same:", r.Methods[c], r.Methods[0])
+		for i, d := range Depths {
+			better, worse, same := r.wins(c, 0, d)
+			fmt.Fprintf(b, " %d / %d / %d at the top %d%s", better, worse, same, d, listSep(i, len(Depths)))
+		}
+
+		b.WriteString("\n")
 	}
 }
 
+// wins counts the queries where method a's mean rating over the top depth is above, below or equal to b's.
+func (r Relevance) wins(a, c, depth int) (better, worse, same int) {
+	for qi := range r.Queries {
+		x, y := r.queryMean(a, qi, depth), r.queryMean(c, qi, depth)
+		switch {
+		case x > y:
+			better++
+		case x < y:
+			worse++
+		default:
+			same++
+		}
+	}
+
+	return better, worse, same
+}
+
+// listSep ends the item i of n in a sentence.
+func listSep(i, n int) string {
+	if i == n-1 {
+		return "."
+	}
+
+	return ","
+}
 func (r Relevance) writePerQuery(b *strings.Builder) {
 	b.WriteString("\n## Per query\n\nMean rating of the top 10 / 30 / 100; shared: works in both top 100s.\n\n| # | Kind | Query |")
 	for _, name := range r.Methods {

@@ -9,5 +9,6 @@
 # Local secrets (docker compose reads .env)
 .env
 
-# LLM relevance ratings cached by cmd/bench -judge
+# LLM answers cached by cmd/bench -judge
 bench-judgments.jsonl
+bench-query-keywords.jsonl

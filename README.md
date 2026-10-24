@@ -66,6 +66,10 @@ Embeds the 10,000 most-rated works with a clean description (at least 300 bytes,
 Ollama. Without `-limit` it embeds every eligible work, which takes about 11 hours on a 16-core CPU. It only
 computes missing or outdated vectors, so it can be stopped with Ctrl+C and run again.
 
+`go run ./cmd/embed -keywords` embeds each work's LLM keywords (see [Extract keywords](#extract-keywords)) instead,
+into `work_keyword_embeddings`, for searching them by meaning (`cmd/search -retrieval keyword-vectors`). It takes
+about 8 minutes per 4,000 works.
+
 ## Search
 
 ```sh
@@ -126,8 +130,15 @@ Flags: `-o`, `-sample`, `-queries` (another query file), `-n`, `-no-rerank`, and
 go run ./cmd/bench -sample -judge -o relevance.md
 ```
 
-With `-judge`, nothing is re-ranked. For each query, it takes the top 100 from vector retrieval and the top 100 from
-keyword retrieval, and an LLM rates every result:
+With `-judge`, nothing is re-ranked. For each query, it takes the top 100 from each of these retrievals:
+- `vector`: the description vectors nearest to the query's.
+- `keywords`: BM25 on the LLM keywords.
+- `keyword-vectors`: the vectors of the LLM keywords nearest to the query's (`cmd/embed -keywords` first).
+- `keyword-vectors-llm`: the same, with the vector of the query's own keywords, which an LLM extracts like a book's.
+  They're cached in `bench-query-keywords.jsonl` (`-query-keywords-cache`), and the LLM's answer time counts in the
+  retrieval time.
+
+An LLM rates every result:
 - 0: not relevant.
 - 1: weak match.
 - 2: reasonable suggestion.
@@ -135,13 +146,13 @@ keyword retrieval, and an LLM rates every result:
 
 The LLM reads the query and the book's title, authors, year and description; the rubric is in
 `internal/bench/judge.go`. The report gives each method's mean rating and share of results rated 2 or more over the
-top 10, 30 and 100, how many known targets each list contains, how many works the two lists share, and retrieval
-times. An appendix gives the same per query.
+top 10, 30 and 100, how many known targets each list contains, retrieval times, and, against the first method, how
+many works each list shares with it and on how many queries it rates better or worse. An appendix gives the same per query.
 
-A work in both lists is rated once. Ratings are cached in `bench-judgments.jsonl` (`-judge-cache`, git-ignored), keyed
+A work in several lists is rated once. Ratings are cached in `bench-judgments.jsonl` (`-judge-cache`, git-ignored), keyed
 by model, prompt version, query and book text, so a rerun only rates new pairs. `-concurrency` (default 4) and
 `-per-minute` (default 60) pace the LLM calls. The LLM is set as for `cmd/enrich` (`LLM_PROVIDER`, `LLM_URL`,
-`LLM_MODEL`, `LLM_API_KEY`). A full run makes up to 42 × 200 ratings, fewer when the lists overlap.
+`LLM_MODEL`, `LLM_API_KEY`). A full run makes up to 42 × 400 ratings, fewer when the lists overlap.
 
 ## API
 
