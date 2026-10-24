@@ -180,7 +180,10 @@ It uses the `-judge` ratings (same cache, same LLM settings) to report, before a
 `-svg rerank` also draws `rerank-30.svg` and `rerank-100.svg` (rank before vs after, coloured by rating) and
 `rerank-curve.svg` (mean rating at each rank). With the local re-ranker, a run takes about 8 minutes.
 
-Each text is scored once per query, and calls rejected with 429 are retried with a growing wait. For rate-limited APIs,
+Each text is scored once per query, whatever the depths, and calls rejected with 429 are retried with a growing wait.
+Scores are cached by model in `bench-rerank-scores.jsonl` (`-rerank-cache`, git-ignored), so a rerun makes no call.
+`-rerank-depths 10,20,30,50,100` reports more depths than the default `30,100`: a table of nDCG@10, top-10 ratings,
+targets and estimated tokens per depth. The detailed sections and charts cover 30 and 100. For rate-limited APIs,
 `-rerank-chunk`, `-rerank-per-minute` and `-rerank-tokens-per-minute` split and pace the calls. For example, Voyage AI's
 free tier (3 calls and 10,000 tokens per minute, without a payment method) needs
 `-rerank-chunk 30 -rerank-per-minute 3 -rerank-tokens-per-minute 9500`, about 2 hours for 42 queries.

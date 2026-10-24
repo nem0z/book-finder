@@ -3,6 +3,7 @@ package bench
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -85,5 +86,46 @@ func TestPacedRerankerCaps(t *testing.T) {
 	defer cancel()
 	if err := p.wait(ctx, 20); err == nil {
 		t.Error("a call over the token cap should wait")
+	}
+}
+
+func TestPacedRerankerCache(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "scores.jsonl")
+	inner := &lengthScorer{}
+	p := &PacedReranker{RR: inner}
+	if err := p.OpenCache(path, "m"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := p.Scores(ctx, "q", []string{"a", "bb"}); err != nil {
+		t.Fatal(err)
+	}
+
+	p.Close()
+
+	// Another run reads the scores: only the new text is scored. Another model scores everything.
+	again := &PacedReranker{RR: inner}
+	if err := again.OpenCache(path, "m"); err != nil {
+		t.Fatal(err)
+	}
+	defer again.Close()
+
+	if scores, err := again.Scores(ctx, "q", []string{"bb", "a", "ccc"}); err != nil || !slices.Equal(scores, []float64{2, 1, 3}) || !slices.Equal(inner.calls, []int{2, 1}) {
+		t.Errorf("cached: %v, %v, calls %v", scores, err, inner.calls)
+	}
+
+	other := &PacedReranker{RR: inner}
+	if err := other.OpenCache(path, "other"); err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+
+	if _, err := other.Scores(ctx, "q", []string{"a"}); err != nil || len(inner.calls) != 3 {
+		t.Errorf("other model: %v, calls %v", err, inner.calls)
+	}
+
+	if n := estimateTokens("12345678", []string{"1234", "12345678"}); n != 2*2+1+2 {
+		t.Errorf("tokens: %d", n)
 	}
 }

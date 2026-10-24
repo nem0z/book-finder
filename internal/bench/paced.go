@@ -2,7 +2,11 @@ package bench
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -37,14 +41,56 @@ type PacedReranker struct {
 	PerMinute, TokensPerMinute int // 0: no cap
 
 	mu     sync.Mutex
-	scores map[string]float64
+	scores map[string]float64 // by scoreKey
+	model  string
+	file   *os.File
 	calls  []pacedCall // in the last minute
 	spent  time.Duration
+}
+
+// scoreLine is a line of the score cache file.
+type scoreLine struct {
+	Key   string  `json:"key"`
+	Score float64 `json:"score"`
 }
 
 type pacedCall struct {
 	at     time.Time
 	tokens int
+}
+
+// OpenCache loads the scores of model cached in the file at path, creating it if needed, and appends the
+// new scores to it, so that a later run with the same model, queries and texts makes no call.
+func (p *PacedReranker) OpenCache(path, model string) error {
+	f, lines, err := openJSONL[scoreLine](path)
+	if err != nil {
+		return err
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.scores, p.model, p.file = map[string]float64{}, model, f
+	for _, l := range lines {
+		p.scores[l.Key] = l.Score
+	}
+
+	return nil
+}
+
+// Close closes the cache file, if one is open.
+func (p *PacedReranker) Close() error {
+	if p.file == nil {
+		return nil
+	}
+
+	return p.file.Close()
+}
+
+// scoreKey identifies the score of text for query by the model.
+func (p *PacedReranker) scoreKey(query, text string) string {
+	h := sha256.Sum256([]byte(p.model + "\x00" + query + "\x00" + text))
+	return hex.EncodeToString(h[:16])
 }
 
 // Scores implements search.Reranker.
@@ -58,7 +104,7 @@ func (p *PacedReranker) Scores(ctx context.Context, query string, texts []string
 
 	var missing []int
 	for i, t := range texts {
-		if _, ok := p.scores[query+"\x00"+t]; !ok {
+		if _, ok := p.scores[p.scoreKey(query, t)]; !ok {
 			missing = append(missing, i)
 		}
 	}
@@ -80,7 +126,14 @@ func (p *PacedReranker) Scores(ctx context.Context, query string, texts []string
 		}
 
 		for i, ti := range missing[:n] {
-			p.scores[query+"\x00"+texts[ti]] = scores[i]
+			key := p.scoreKey(query, texts[ti])
+			p.scores[key] = scores[i]
+			if p.file != nil {
+				line, _ := json.Marshal(scoreLine{Key: key, Score: scores[i]})
+				if _, err := p.file.Write(append(line, '\n')); err != nil {
+					return nil, err
+				}
+			}
 		}
 
 		missing = missing[n:]
@@ -88,7 +141,7 @@ func (p *PacedReranker) Scores(ctx context.Context, query string, texts []string
 
 	out := make([]float64, len(texts))
 	for i, t := range texts {
-		out[i] = p.scores[query+"\x00"+t]
+		out[i] = p.scores[p.scoreKey(query, t)]
 	}
 
 	return out, nil
@@ -104,10 +157,7 @@ func (p *PacedReranker) Spent() time.Duration {
 
 // call scores texts, waiting for the rate caps first and after a 429.
 func (p *PacedReranker) call(ctx context.Context, query string, texts []string) ([]float64, error) {
-	tokens := len(query) / bytesPerToken * len(texts)
-	for _, t := range texts {
-		tokens += len(t) / bytesPerToken
-	}
+	tokens := estimateTokens(query, texts)
 
 	for attempt := 0; ; attempt++ {
 		if err := p.wait(ctx, tokens); err != nil {
@@ -130,6 +180,17 @@ func (p *PacedReranker) call(ctx context.Context, query string, texts []string) 
 			return nil, err
 		}
 	}
+}
+
+// estimateTokens estimates the tokens a re-ranker API bills for scoring texts: the query's for each text,
+// plus the texts'.
+func estimateTokens(query string, texts []string) int {
+	tokens := len(query) / bytesPerToken * len(texts)
+	for _, t := range texts {
+		tokens += len(t) / bytesPerToken
+	}
+
+	return tokens
 }
 
 // wait sleeps until a call of tokens fits the caps over the last minute.

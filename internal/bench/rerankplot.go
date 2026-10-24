@@ -75,7 +75,7 @@ func (e RerankEffect) WriteSVG(w io.Writer, v int) error {
 // curveColours colour the rating curves: before re-ranking, then each variant.
 var curveColours = []string{"#555555", "#3d8bfd", "#d1495b"}
 
-// WriteCurveSVG draws, for each order (before re-ranking, then each variant), the mean rating at each
+// WriteCurveSVG draws, for each order (before re-ranking, then each detailed variant), the mean rating at each
 // rank over the queries, averaged over 5 ranks. A good re-ranker makes the curve start higher and fall
 // faster: it moves the best-rated works to the top.
 func (e RerankEffect) WriteCurveSVG(w io.Writer) error {
@@ -85,8 +85,8 @@ func (e RerankEffect) WriteCurveSVG(w io.Writer) error {
 
 	names := []string{"before re-ranking"}
 	orders := [][][]search.Result{e.Before}
-	for v, d := range e.Depths {
-		names, orders = append(names, fmt.Sprintf("re-rank top %d", d)), append(orders, e.After[v])
+	for _, v := range e.detailedVariants() {
+		names, orders = append(names, fmt.Sprintf("re-rank top %d", e.Depths[v])), append(orders, e.After[v])
 	}
 
 	var b strings.Builder

@@ -12,3 +12,4 @@
 # LLM answers cached by cmd/bench -judge
 bench-judgments.jsonl
 bench-query-keywords.jsonl
+bench-rerank-scores.jsonl

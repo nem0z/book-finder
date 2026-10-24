@@ -16,6 +16,9 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -40,6 +43,7 @@ type config struct {
 	svg, rrName        string
 	chunk, perMinuteRR int
 	tokensPerMinute    int
+	depths, scoreCache string
 	cache, queryCache  string
 	workers, perMinute int
 }
@@ -63,6 +67,8 @@ func main() {
 	flag.IntVar(&c.perMinute, "per-minute", 60, "at most this many -judge ratings per minute (0: no cap)")
 	flag.BoolVar(&c.rerankEffect, "rerank-effect", false, "show what the re-ranker does to the top 100 of keyword-vector retrieval, re-ranking the top 30 or all 100, with -judge's ratings")
 	flag.StringVar(&c.svg, "svg", "", "with -rerank-effect, also draw each variant as <svg>-<depth>.svg and the mean rating per rank as <svg>-curve.svg")
+	flag.StringVar(&c.depths, "rerank-depths", "30,100", "with -rerank-effect, how many of the top 100 to re-rank, comma-separated; each work is scored once whatever the depths")
+	flag.StringVar(&c.scoreCache, "rerank-cache", "bench-rerank-scores.jsonl", "with -rerank-effect, file the re-ranker's scores are cached in, by model")
 	flag.IntVar(&c.chunk, "rerank-chunk", 0, "with -rerank-effect, at most this many texts per re-ranker call (0: no limit)")
 	flag.IntVar(&c.perMinuteRR, "rerank-per-minute", 0, "with -rerank-effect, at most this many re-ranker calls per minute (0: no cap)")
 	flag.IntVar(&c.tokensPerMinute, "rerank-tokens-per-minute", 0, "with -rerank-effect, at most about this many re-ranker tokens per minute (0: no cap)")
@@ -165,9 +171,18 @@ func runRerankEffect(ctx context.Context, c config, pool *pgxpool.Pool, emb sear
 	defer closeAll()
 
 	// Re-ranking the top 30 then all 100 scores each work once; 429s are retried.
+	depths, err := parseDepths(c.depths)
+	if err != nil {
+		return err
+	}
+
 	rr := &bench.PacedReranker{RR: c.rr, Chunk: c.chunk, PerMinute: c.perMinuteRR, TokensPerMinute: c.tokensPerMinute}
+	if err := rr.OpenCache(c.scoreCache, c.rrName); err != nil {
+		return err
+	}
+	defer rr.Close()
+
 	start := time.Now()
-	depths := []int{search.DefaultCandidates, bench.RecallDepth}
 	e, err := bench.RunRerankEffect(ctx, judge, rr, retriever(pool, emb, search.RetrieveKeywordVectors, f), queries, depths)
 	if err != nil {
 		return err
@@ -185,6 +200,10 @@ func runRerankEffect(ctx context.Context, c config, pool *pgxpool.Pool, emb sear
 
 	if c.svg != "" {
 		for v, d := range depths {
+			if !e.Detailed(v) {
+				continue
+			}
+
 			if err := write(fmt.Sprintf("%s-%d.svg", c.svg, d), func(w io.Writer) error { return e.WriteSVG(w, v) }); err != nil {
 				return err
 			}
@@ -250,6 +269,26 @@ func runJudge(ctx context.Context, c config, pool *pgxpool.Pool, emb search.Quer
 	slog.Info("bench finished", "queries", len(queries), "took", time.Since(start).Round(time.Second))
 
 	return write(c.out, rel.WriteMarkdown)
+}
+
+// parseDepths reads "30,100" as re-rank depths, each between 1 and 100. 30, as the search re-ranks, comes
+// first, so that its re-rank time is that of one call rather than of the scores the other depths miss.
+func parseDepths(s string) ([]int, error) {
+	var out []int
+	for _, f := range strings.Split(s, ",") {
+		d, err := strconv.Atoi(strings.TrimSpace(f))
+		if err != nil || d < 1 || d > bench.RecallDepth {
+			return nil, fmt.Errorf("re-rank depth %q: want a number from 1 to %d", f, bench.RecallDepth)
+		}
+
+		out = append(out, d)
+	}
+
+	if i := slices.Index(out, search.DefaultCandidates); i > 0 {
+		out = slices.Insert(slices.Delete(out, i, i+1), 0, search.DefaultCandidates)
+	}
+
+	return out, nil
 }
 
 // write writes a report to the file at path, or to stdout when path is empty.
