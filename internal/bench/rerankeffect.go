@@ -60,13 +60,18 @@ func RunRerankEffect(ctx context.Context, judge *Judge, rr search.Reranker, retr
 		e.Before, e.Ratings = append(e.Before, list), append(e.Ratings, ratings)
 		for vi, d := range depths {
 			d = min(d, len(list))
-			start := time.Now()
+			start, spent := time.Now(), spentBy(rr)
 			top, err := search.Rerank(ctx, rr, q.Query, list[:d], d)
 			if err != nil {
 				return e, fmt.Errorf("%q: %w", q.Query, err)
 			}
 
-			e.Took[vi] = append(e.Took[vi], time.Since(start))
+			took := time.Since(start)
+			if s := spentBy(rr); s >= 0 {
+				took = s - spent
+			}
+
+			e.Took[vi] = append(e.Took[vi], took)
 			e.After[vi] = append(e.After[vi], append(top, list[d:]...))
 		}
 
@@ -74,6 +79,16 @@ func RunRerankEffect(ctx context.Context, judge *Judge, rr search.Reranker, retr
 	}
 
 	return e, nil
+}
+
+// spentBy returns the time rr spent in calls, for re-rankers that wait between calls (PacedReranker); -1
+// for others.
+func spentBy(rr search.Reranker) time.Duration {
+	if s, ok := rr.(interface{ Spent() time.Duration }); ok {
+		return s.Spent()
+	}
+
+	return -1
 }
 
 // band returns the band of a 0-based rank.

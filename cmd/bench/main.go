@@ -37,7 +37,9 @@ type config struct {
 
 	judge, dryRun      bool
 	rerankEffect       bool
-	svg                string
+	svg, rrName        string
+	chunk, perMinuteRR int
+	tokensPerMinute    int
 	cache, queryCache  string
 	workers, perMinute int
 }
@@ -61,12 +63,14 @@ func main() {
 	flag.IntVar(&c.perMinute, "per-minute", 60, "at most this many -judge ratings per minute (0: no cap)")
 	flag.BoolVar(&c.rerankEffect, "rerank-effect", false, "show what the re-ranker does to the top 100 of keyword-vector retrieval, re-ranking the top 30 or all 100, with -judge's ratings")
 	flag.StringVar(&c.svg, "svg", "", "with -rerank-effect, also draw each variant as <svg>-<depth>.svg and the mean rating per rank as <svg>-curve.svg")
+	flag.IntVar(&c.chunk, "rerank-chunk", 0, "with -rerank-effect, at most this many texts per re-ranker call (0: no limit)")
+	flag.IntVar(&c.perMinuteRR, "rerank-per-minute", 0, "with -rerank-effect, at most this many re-ranker calls per minute (0: no cap)")
+	flag.IntVar(&c.tokensPerMinute, "rerank-tokens-per-minute", 0, "with -rerank-effect, at most about this many re-ranker tokens per minute (0: no cap)")
 	flag.Parse()
 
 	if !*noRerank && (!c.judge || c.rerankEffect) {
-		var name string
-		c.rr, name = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
-		slog.Info("re-ranker", "name", name)
+		c.rr, c.rrName = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
+		slog.Info("re-ranker", "name", c.rrName)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -160,9 +164,11 @@ func runRerankEffect(ctx context.Context, c config, pool *pgxpool.Pool, emb sear
 	}
 	defer closeAll()
 
+	// Re-ranking the top 30 then all 100 scores each work once; 429s are retried.
+	rr := &bench.PacedReranker{RR: c.rr, Chunk: c.chunk, PerMinute: c.perMinuteRR, TokensPerMinute: c.tokensPerMinute}
 	start := time.Now()
 	depths := []int{search.DefaultCandidates, bench.RecallDepth}
-	e, err := bench.RunRerankEffect(ctx, judge, c.rr, retriever(pool, emb, search.RetrieveKeywordVectors, f), queries, depths)
+	e, err := bench.RunRerankEffect(ctx, judge, rr, retriever(pool, emb, search.RetrieveKeywordVectors, f), queries, depths)
 	if err != nil {
 		return err
 	}
@@ -173,8 +179,8 @@ func runRerankEffect(ctx context.Context, c config, pool *pgxpool.Pool, emb sear
 	}
 
 	cached, asked, failed := judge.Stats()
-	e.Note = fmt.Sprintf("%s Keyword-vector retrieval, query as typed. Ratings by %s (%s): %d cached, %d asked in this "+
-		"run, %d failed.", note, lc.Model, lc.Provider, cached, asked, failed)
+	e.Note = fmt.Sprintf("%s Keyword-vector retrieval, query as typed, re-ranked by %s. Ratings by %s (%s): %d cached, %d "+
+		"asked in this run, %d failed.", note, c.rrName, lc.Model, lc.Provider, cached, asked, failed)
 	slog.Info("bench finished", "queries", len(queries), "took", time.Since(start).Round(time.Second))
 
 	if c.svg != "" {
