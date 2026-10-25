@@ -58,14 +58,29 @@ var (
 }`)
 )
 
+// KnownItemRubric rates how well a book matches a search describing it (JudgePrompt).
+var KnownItemRubric = Rubric{Version: JudgePromptVersion, Prompt: JudgePrompt, SchemaName: judgeSchemaName, Schema: judgeSchema}
+
+// Rubric is what a judge asks: the prompt, the answer's schema and the names of the dimensions it scores
+// besides the overall rating. Version is part of the cache key, so each rubric has its own ratings.
+type Rubric struct {
+	Version    string
+	Prompt     string
+	SchemaName string
+	Schema     json.RawMessage
+	// Dimensions are scored 0 to MaxDimension, or NotApplicable when the search doesn't ask for them.
+	Dimensions []string
+}
+
 // Judgment is one cached rating, a line of the cache file.
 type Judgment struct {
-	Key    string `json:"key"`
-	Query  string `json:"query"`
-	WorkID string `json:"work_id"`
-	Title  string `json:"title"`
-	Rating int    `json:"rating"`
-	Reason string `json:"reason"`
+	Key        string         `json:"key"`
+	Query      string         `json:"query"`
+	WorkID     string         `json:"work_id"`
+	Title      string         `json:"title"`
+	Rating     int            `json:"rating"`
+	Dimensions map[string]int `json:"dimensions,omitempty"`
+	Reason     string         `json:"reason"`
 }
 
 // Judge rates how relevant books are to queries with an LLM. Ratings are appended to a JSONL cache file,
@@ -73,6 +88,7 @@ type Judgment struct {
 type Judge struct {
 	client llm.Client
 	model  string
+	rubric Rubric
 	// Workers is how many ratings run at once; 0 means 4. PerMinute caps the ratings asked per minute;
 	// 0 means no cap.
 	Workers, PerMinute int
@@ -88,15 +104,20 @@ type Judge struct {
 	failed int
 }
 
-// OpenJudge returns a judge asking client (model is its model, part of the cache key) and caching ratings
-// in the file at path, created if needed.
+// OpenJudge returns a judge asking client with KnownItemRubric. See OpenJudgeRubric.
 func OpenJudge(client llm.Client, model, path string) (*Judge, error) {
+	return OpenJudgeRubric(client, model, path, KnownItemRubric)
+}
+
+// OpenJudgeRubric returns a judge asking client (model is its model, part of the cache key) with rubric, and
+// caching ratings in the file at path, created if needed.
+func OpenJudgeRubric(client llm.Client, model, path string, rubric Rubric) (*Judge, error) {
 	f, judgments, err := openJSONL[Judgment](path)
 	if err != nil {
 		return nil, err
 	}
 
-	j := &Judge{client: client, model: model, cache: map[string]Judgment{}, file: f}
+	j := &Judge{client: client, model: model, rubric: rubric, cache: map[string]Judgment{}, file: f}
 	for _, jd := range judgments {
 		j.cache[jd.Key] = jd
 	}
@@ -122,6 +143,16 @@ func (j *Judge) Rating(query string, book search.Result) (int, bool) {
 	jd, ok := j.cache[j.key(query, book)]
 
 	return jd.Rating, ok
+}
+
+// Judgment returns the cached judgment of book for query, if there is one.
+func (j *Judge) Judgment(query string, book search.Result) (Judgment, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	jd, ok := j.cache[j.key(query, book)]
+
+	return jd, ok
 }
 
 // RateAll rates the books not rated yet for query. A failed rating is logged and skipped; it stops with
@@ -178,13 +209,14 @@ func (j *Judge) RateAll(ctx context.Context, query string, books []search.Result
 
 func (j *Judge) rateOne(ctx context.Context, query string, b search.Result) {
 	var a struct {
-		Rating int    `json:"rating"`
-		Reason string `json:"reason"`
+		Rating     int            `json:"rating"`
+		Dimensions map[string]int `json:"dimensions"`
+		Reason     string         `json:"reason"`
 	}
 
-	err := j.client.JSON(ctx, JudgePrompt, judgeMessage(query, b), judgeSchemaName, judgeSchema, &a)
-	if err == nil && (a.Rating < 0 || a.Rating > MaxRating) {
-		err = fmt.Errorf("rating %d out of range", a.Rating)
+	err := j.client.JSON(ctx, j.rubric.Prompt, judgeMessage(query, b), j.rubric.SchemaName, j.rubric.Schema, &a)
+	if err == nil {
+		err = j.rubric.check(a.Rating, a.Dimensions)
 	}
 
 	j.mu.Lock()
@@ -200,7 +232,7 @@ func (j *Judge) rateOne(ctx context.Context, query string, b search.Result) {
 		return
 	}
 
-	jd := Judgment{Key: j.key(query, b), Query: query, WorkID: b.ID, Title: b.Title, Rating: a.Rating, Reason: a.Reason}
+	jd := Judgment{Key: j.key(query, b), Query: query, WorkID: b.ID, Title: b.Title, Rating: a.Rating, Dimensions: a.Dimensions, Reason: a.Reason}
 	line, _ := json.Marshal(jd)
 	if _, err := j.file.Write(append(line, '\n')); err != nil {
 		j.logger().Warn("cache write failed", "err", err)
@@ -211,8 +243,23 @@ func (j *Judge) rateOne(ctx context.Context, query string, b search.Result) {
 
 // key identifies a rating: the model, prompt, query and what the judge reads of the book.
 func (j *Judge) key(query string, b search.Result) string {
-	h := sha256.Sum256([]byte(strings.Join([]string{j.model, JudgePromptVersion, query, b.ID, judgeMessage(query, b)}, "\x00")))
+	h := sha256.Sum256([]byte(strings.Join([]string{j.model, j.rubric.Version, query, b.ID, judgeMessage(query, b)}, "\x00")))
 	return hex.EncodeToString(h[:16])
+}
+
+// check returns an error when the rating or a dimension score is out of range, or a dimension is missing.
+func (r Rubric) check(rating int, dims map[string]int) error {
+	if rating < 0 || rating > MaxRating {
+		return fmt.Errorf("rating %d out of range", rating)
+	}
+
+	for _, d := range r.Dimensions {
+		if s, ok := dims[d]; !ok || s < NotApplicable || s > MaxDimension {
+			return fmt.Errorf("dimension %s: %d (present: %v) out of range", d, s, ok)
+		}
+	}
+
+	return nil
 }
 
 func (j *Judge) logger() *slog.Logger {

@@ -18,8 +18,13 @@ import (
 // RecallDepth is how many candidates are searched for the target, before re-ranking.
 const RecallDepth = 100
 
-//go:embed queries.json
-var builtinQueries []byte
+var (
+	//go:embed queries.json
+	builtinQueries []byte
+
+	//go:embed recommendation-queries.json
+	builtinRecommendationQueries []byte
+)
 
 var ErrNoQueries = errors.New("no queries")
 
@@ -30,6 +35,11 @@ type Query struct {
 	Kind    string   `json:"kind"`
 	Title   string   `json:"title,omitempty"`
 	Targets []string `json:"targets,omitempty"`
+	// Recommendation queries have a category and a length (S, M, L, XL); Flag notes a known catalogue
+	// limit that may sink a query whatever the search.
+	Category string `json:"category,omitempty"`
+	Length   string `json:"length,omitempty"`
+	Flag     string `json:"flag,omitempty"`
 }
 
 // RetrieveFunc returns the n best candidates for query, best first.
@@ -75,7 +85,17 @@ type Report struct {
 
 // LoadQueries reads queries from a JSON file, or returns the built-in ones when path is empty.
 func LoadQueries(path string) ([]Query, error) {
-	data := builtinQueries
+	return loadQueries(path, builtinQueries)
+}
+
+// LoadRecommendationQueries reads queries from a JSON file, or returns the built-in recommendation queries
+// when path is empty: readers asking for a kind of book, not describing one.
+func LoadRecommendationQueries(path string) ([]Query, error) {
+	return loadQueries(path, builtinRecommendationQueries)
+}
+
+func loadQueries(path string, builtin []byte) ([]Query, error) {
+	data := builtin
 	if path != "" {
 		var err error
 		if data, err = os.ReadFile(path); err != nil {

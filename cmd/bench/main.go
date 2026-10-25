@@ -40,6 +40,7 @@ type config struct {
 
 	judge, dryRun      bool
 	rerankEffect       bool
+	recommend          bool
 	svg, rrName        string
 	chunk, perMinuteRR int
 	tokensPerMinute    int
@@ -65,6 +66,7 @@ func main() {
 	flag.StringVar(&c.queryCache, "query-keywords-cache", "bench-query-keywords.jsonl", "file the -judge query keywords are cached in")
 	flag.IntVar(&c.workers, "concurrency", 4, "-judge ratings asked at once")
 	flag.IntVar(&c.perMinute, "per-minute", 60, "at most this many -judge ratings per minute (0: no cap)")
+	flag.BoolVar(&c.recommend, "recommend", false, "compare description and keyword vectors, with and without re-ranking the top 30, on recommendation queries, with an LLM judging every result as a recommendation")
 	flag.BoolVar(&c.rerankEffect, "rerank-effect", false, "show what the re-ranker does to the top 100 of keyword-vector retrieval, re-ranking the top 30 or all 100, with -judge's ratings")
 	flag.StringVar(&c.svg, "svg", "", "with -rerank-effect, also draw each variant as <svg>-<depth>.svg and the mean rating per rank as <svg>-curve.svg")
 	flag.StringVar(&c.depths, "rerank-depths", "30,100", "with -rerank-effect, how many of the top 100 to re-rank, comma-separated; each work is scored once whatever the depths")
@@ -74,7 +76,7 @@ func main() {
 	flag.IntVar(&c.tokensPerMinute, "rerank-tokens-per-minute", 0, "with -rerank-effect, at most about this many re-ranker tokens per minute (0: no cap)")
 	flag.Parse()
 
-	if !*noRerank && (!c.judge || c.rerankEffect) {
+	if !*noRerank && (!c.judge || c.rerankEffect || c.recommend) {
 		c.rr, c.rrName = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
 		slog.Info("re-ranker", "name", c.rrName)
 	}
@@ -89,7 +91,12 @@ func main() {
 }
 
 func run(ctx context.Context, c config) error {
-	queries, err := bench.LoadQueries(c.queries)
+	load := bench.LoadQueries
+	if c.recommend {
+		load = bench.LoadRecommendationQueries
+	}
+
+	queries, err := load(c.queries)
 	if err != nil {
 		return err
 	}
@@ -110,6 +117,10 @@ func run(ctx context.Context, c config) error {
 	}
 
 	emb := embed.NewOllama(c.ollama, embed.DefaultModel)
+	if c.recommend {
+		return runRecommend(ctx, c, pool, emb, f, note, queries)
+	}
+
 	if c.rerankEffect {
 		return runRerankEffect(ctx, c, pool, emb, f, note, queries)
 	}
@@ -133,6 +144,11 @@ func run(ctx context.Context, c config) error {
 // openJudge returns the LLM set by LLM_PROVIDER, LLM_URL, LLM_MODEL and LLM_API_KEY, a judge asking it with
 // c's settings, and a function that closes both.
 func openJudge(c config) (llm.Client, llm.Config, *bench.Judge, func(), error) {
+	return openJudgeRubric(c, bench.KnownItemRubric)
+}
+
+// openJudgeRubric is openJudge with another rubric.
+func openJudgeRubric(c config, rubric bench.Rubric) (llm.Client, llm.Config, *bench.Judge, func(), error) {
 	lc := llm.Config{Provider: envOr("LLM_PROVIDER", llm.ProviderAzure), URL: os.Getenv("LLM_URL"),
 		Model: os.Getenv("LLM_MODEL"), APIKey: os.Getenv("LLM_API_KEY")}
 	client, err := llm.New(lc)
@@ -146,7 +162,7 @@ func openJudge(c config) (llm.Client, llm.Config, *bench.Judge, func(), error) {
 		closeClient = func() { closer.Close() }
 	}
 
-	judge, err := bench.OpenJudge(client, lc.Model, c.cache)
+	judge, err := bench.OpenJudgeRubric(client, lc.Model, c.cache, rubric)
 	if err != nil {
 		closeClient()
 		return nil, lc, nil, nil, err
@@ -155,6 +171,97 @@ func openJudge(c config) (llm.Client, llm.Config, *bench.Judge, func(), error) {
 	judge.Workers, judge.PerMinute, judge.DryRun = c.workers, c.perMinute, c.dryRun
 
 	return client, lc, judge, func() { judge.Close(); closeClient() }, nil
+}
+
+// runRecommend compares description and keyword vectors, then both with their top 30 re-ranked, on the
+// recommendation queries. Rating and re-ranking run at once; the report is written when the rating is done,
+// with the methods without re-ranking, then again with all of them.
+func runRecommend(ctx context.Context, c config, pool *pgxpool.Pool, emb search.QueryEmbedder, f search.Filters, note string, queries []bench.Query) error {
+	_, lc, judge, closeAll, err := openJudgeRubric(c, bench.RecommendationRubric)
+	if err != nil {
+		return err
+	}
+	defer closeAll()
+
+	start := time.Now()
+	rec, err := bench.RetrieveRecommendations(ctx, []bench.Method{
+		{Name: "description vectors", Retrieve: retriever(pool, emb, search.RetrieveVector, f)},
+		{Name: "keyword vectors", Retrieve: retriever(pool, emb, search.RetrieveKeywordVectors, f)},
+	}, queries)
+	if err != nil {
+		return err
+	}
+
+	if c.dryRun {
+		if err := rec.Rate(ctx, judge); err != nil {
+			return err
+		}
+
+		slog.Info("dry run", "ratings to ask", judge.Pending)
+		return nil
+	}
+
+	type reranked struct {
+		orders [][]search.Result
+		took   []time.Duration
+	}
+
+	results := make([]reranked, 2)
+	done := make(chan error, 1)
+	if c.rr != nil {
+		rr := &bench.PacedReranker{RR: c.rr, Chunk: c.chunk, PerMinute: c.perMinuteRR, TokensPerMinute: c.tokensPerMinute}
+		if err := rr.OpenCache(c.scoreCache, c.rrName); err != nil {
+			return err
+		}
+		defer rr.Close()
+
+		go func() {
+			for base := range results {
+				var err error
+				if results[base].orders, results[base].took, err = rec.RerankMethod(ctx, rr, base, search.DefaultCandidates); err != nil {
+					done <- err
+					return
+				}
+
+				slog.Info("re-ranked", "method", rec.Methods[base])
+			}
+
+			done <- nil
+		}()
+	} else {
+		done <- nil
+	}
+
+	if err := rec.Rate(ctx, judge); err != nil {
+		return err
+	}
+
+	cached, asked, failed := judge.Stats()
+	rec.Note = fmt.Sprintf("%s Ratings by %s (%s), rubric %s: %d cached, %d asked in this run, %d failed.", note, lc.Model,
+		lc.Provider, bench.RecommendationPromptVersion, cached, asked, failed)
+	rec.Baseline, rec.Proposed = 0, 1
+	if err := write(c.out, rec.WriteMarkdown); err != nil {
+		return err
+	}
+
+	slog.Info("rated; report written without re-ranking", "took", time.Since(start).Round(time.Second))
+	if c.rr == nil {
+		return nil
+	}
+
+	if err := <-done; err != nil {
+		return err
+	}
+
+	for base, res := range results {
+		rec.AddMethod(fmt.Sprintf("%s + %s top %d", rec.Methods[base], c.rrName, search.DefaultCandidates), base, res.orders, res.took)
+	}
+
+	// What Azure runs today, and the proposed setup.
+	rec.Baseline, rec.Proposed = 2, 3
+	slog.Info("bench finished", "queries", len(queries), "took", time.Since(start).Round(time.Second))
+
+	return write(c.out, rec.WriteMarkdown)
 }
 
 // runRerankEffect re-ranks the top 30 and all 100 of keyword-vector retrieval for every query, and reports
