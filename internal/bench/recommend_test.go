@@ -77,7 +77,20 @@ func TestRecommendation(t *testing.T) {
 	}
 
 	r.AddMethod("first re-ranked", 0, orders, took)
-	r.Baseline, r.Proposed = 0, 2
+	r.Baseline, r.Proposed, r.Evaluated, r.EvaluatedBase, r.Pool = 0, 2, 2, 0, 2
+
+	// q1: the pool (C, A) has A; B and E, rated 2 and 3, are elsewhere; the top 10 (A, C, B) has A and B.
+	if s := r.stats(0); s.poolGood != 1 || s.elsewhereGood != 2 || s.top10Good != 2 || s.possible() != 1 || !strings.HasPrefix(s.cause(), "catalogue gap?") {
+		t.Errorf("stats: %+v, %s", s, s.cause())
+	}
+
+	if s := (queryStats{poolGood: 12, top10Good: 5}); !strings.HasPrefix(s.cause(), "ranking") {
+		t.Errorf("ranking cause: %s", s.cause())
+	}
+
+	if s := (queryStats{poolGood: 2, elsewhereGood: 5, top10Good: 2}); !strings.HasPrefix(s.cause(), "retrieval") {
+		t.Errorf("retrieval cause: %s", s.cause())
+	}
 
 	// q1's best 10 are A, E (3), B (2), C (0). "second" gets A, E, C: better than "first", C, A, B.
 	if x, y := r.ndcg10(1, 0), r.ndcg10(0, 0); x <= y || x >= 1 {
@@ -102,6 +115,11 @@ func TestRecommendation(t *testing.T) {
 	}
 
 	for _, want := range []string{
+		"# Accuracy of first re-ranked",
+		"## Retrieval: the top 2 (first)",
+		"## The 2 worst queries",
+		"1. Book A, Author (1900): **3** (mood 0), r",
+		"# Appendix: every method",
 		"| Method | Mean | ≥2 | nDCG@10 | nDCG@10, unflagged | Retrieval | Re-rank |",
 		"Per query, nDCG@10 against first (better / worse / same): second 1 / 0 / 1; first re-ranked",
 		"| Category | Queries | first | second | first re-ranked |",

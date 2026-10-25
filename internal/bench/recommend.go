@@ -22,6 +22,12 @@ type Recommendation struct {
 	Judgments []map[string]Judgment // [query] by work ID; missing when the judge failed
 	// Baseline is the method the others are compared with per query; Proposed the one shown in examples.
 	Baseline, Proposed int
+	// Evaluated is the method whose accuracy the report leads with; EvaluatedBase, when not -1, the method it
+	// re-ranks, to show the re-ranking's effect.
+	Evaluated, EvaluatedBase int
+	// Pool is how many results of the evaluated method (or of the method it re-ranks) are the candidates;
+	// 0 leaves out the accuracy section.
+	Pool int
 	// Note, when set, is written above the results.
 	Note string
 }
@@ -204,12 +210,17 @@ func (r *Recommendation) meanNDCG10(m int, keep func(qi int) bool) float64 {
 	return sum / float64(n)
 }
 
-// dimension is method m's mean score on dimension d over its top 10 results, where the judge found the
-// dimension asked for, the share of those results scored 0, and how many there were.
+// dimension is dimensionAt over the top 10.
 func (r *Recommendation) dimension(m int, d string) (mean, zero float64, n int) {
+	return r.dimensionAt(m, d, 10)
+}
+
+// dimensionAt is method m's mean score on dimension d over its top depth results, where the judge found the
+// dimension asked for, the share of those results scored 0, and how many there were.
+func (r *Recommendation) dimensionAt(m int, d string, depth int) (mean, zero float64, n int) {
 	sum, zeros := 0, 0
 	for qi := range r.Queries {
-		for _, w := range r.Orders[m][qi][:min(10, len(r.Orders[m][qi]))] {
+		for _, w := range r.Orders[m][qi][:min(depth, len(r.Orders[m][qi]))] {
 			jd, ok := r.Judgments[qi][w.ID]
 			if s, asked := jd.Dimensions[d]; ok && asked && s != NotApplicable {
 				sum += s

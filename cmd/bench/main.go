@@ -41,6 +41,7 @@ type config struct {
 	judge, dryRun      bool
 	rerankEffect       bool
 	recommend          bool
+	pool               int
 	svg, rrName        string
 	chunk, perMinuteRR int
 	tokensPerMinute    int
@@ -67,6 +68,7 @@ func main() {
 	flag.IntVar(&c.workers, "concurrency", 4, "-judge ratings asked at once")
 	flag.IntVar(&c.perMinute, "per-minute", 60, "at most this many -judge ratings per minute (0: no cap)")
 	flag.BoolVar(&c.recommend, "recommend", false, "compare description and keyword vectors, with and without re-ranking the top 30, on recommendation queries, with an LLM judging every result as a recommendation")
+	flag.IntVar(&c.pool, "recommend-pool", 50, "with -recommend, how many keyword-vector results are re-ranked: the candidate pool")
 	flag.BoolVar(&c.rerankEffect, "rerank-effect", false, "show what the re-ranker does to the top 100 of keyword-vector retrieval, re-ranking the top 30 or all 100, with -judge's ratings")
 	flag.StringVar(&c.svg, "svg", "", "with -rerank-effect, also draw each variant as <svg>-<depth>.svg and the mean rating per rank as <svg>-curve.svg")
 	flag.StringVar(&c.depths, "rerank-depths", "30,100", "with -rerank-effect, how many of the top 100 to re-rank, comma-separated; each work is scored once whatever the depths")
@@ -173,9 +175,10 @@ func openJudgeRubric(c config, rubric bench.Rubric) (llm.Client, llm.Config, *be
 	return client, lc, judge, func() { judge.Close(); closeClient() }, nil
 }
 
-// runRecommend compares description and keyword vectors, then both with their top 30 re-ranked, on the
-// recommendation queries. Rating and re-ranking run at once; the report is written when the rating is done,
-// with the methods without re-ranking, then again with all of them.
+// runRecommend evaluates the search's pipeline on the recommendation queries: keyword vectors, whose top
+// c.pool (the candidate pool) is re-ranked. Description vectors are rated too, for comparison and to tell retrieval misses from catalogue
+// gaps. Rating and re-ranking run at once; the report is written when the rating is done, without
+// re-ranking, then again with it.
 func runRecommend(ctx context.Context, c config, pool *pgxpool.Pool, emb search.QueryEmbedder, f search.Filters, note string, queries []bench.Query) error {
 	_, lc, judge, closeAll, err := openJudgeRubric(c, bench.RecommendationRubric)
 	if err != nil {
@@ -206,7 +209,8 @@ func runRecommend(ctx context.Context, c config, pool *pgxpool.Pool, emb search.
 		took   []time.Duration
 	}
 
-	results := make([]reranked, 2)
+	const keywordVectors = 1
+	var res reranked
 	done := make(chan error, 1)
 	if c.rr != nil {
 		rr := &bench.PacedReranker{RR: c.rr, Chunk: c.chunk, PerMinute: c.perMinuteRR, TokensPerMinute: c.tokensPerMinute}
@@ -216,17 +220,9 @@ func runRecommend(ctx context.Context, c config, pool *pgxpool.Pool, emb search.
 		defer rr.Close()
 
 		go func() {
-			for base := range results {
-				var err error
-				if results[base].orders, results[base].took, err = rec.RerankMethod(ctx, rr, base, search.DefaultCandidates); err != nil {
-					done <- err
-					return
-				}
-
-				slog.Info("re-ranked", "method", rec.Methods[base])
-			}
-
-			done <- nil
+			var err error
+			res.orders, res.took, err = rec.RerankMethod(ctx, rr, keywordVectors, c.pool)
+			done <- err
 		}()
 	} else {
 		done <- nil
@@ -239,7 +235,7 @@ func runRecommend(ctx context.Context, c config, pool *pgxpool.Pool, emb search.
 	cached, asked, failed := judge.Stats()
 	rec.Note = fmt.Sprintf("%s Ratings by %s (%s), rubric %s: %d cached, %d asked in this run, %d failed.", note, lc.Model,
 		lc.Provider, bench.RecommendationPromptVersion, cached, asked, failed)
-	rec.Baseline, rec.Proposed = 0, 1
+	rec.Baseline, rec.Proposed, rec.Evaluated, rec.EvaluatedBase, rec.Pool = 0, keywordVectors, keywordVectors, -1, c.pool
 	if err := write(c.out, rec.WriteMarkdown); err != nil {
 		return err
 	}
@@ -253,12 +249,8 @@ func runRecommend(ctx context.Context, c config, pool *pgxpool.Pool, emb search.
 		return err
 	}
 
-	for base, res := range results {
-		rec.AddMethod(fmt.Sprintf("%s + %s top %d", rec.Methods[base], c.rrName, search.DefaultCandidates), base, res.orders, res.took)
-	}
-
-	// What Azure runs today, and the proposed setup.
-	rec.Baseline, rec.Proposed = 2, 3
+	rec.AddMethod(fmt.Sprintf("keyword vectors + %s top %d", c.rrName, c.pool), keywordVectors, res.orders, res.took)
+	rec.Proposed, rec.Evaluated, rec.EvaluatedBase = 2, 2, keywordVectors
 	slog.Info("bench finished", "queries", len(queries), "took", time.Since(start).Round(time.Second))
 
 	return write(c.out, rec.WriteMarkdown)

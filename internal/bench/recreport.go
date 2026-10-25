@@ -11,12 +11,18 @@ import (
 // lengthOrder is the order lengths are reported in.
 var lengthOrder = []string{"S", "M", "L", "XL"}
 
-// WriteMarkdown writes the relevance of each method's top 10, then by band of ranks, category, query length
+// WriteMarkdown writes the accuracy of the evaluated method (see writeAccuracy), then the relevance of each
+// method's top 10, then by band of ranks, category, query length
 // and dimension, examples, flagged queries and an appendix per query.
 func (r *Recommendation) WriteMarkdown(w io.Writer) error {
 	var b strings.Builder
 	if r.Note != "" {
 		b.WriteString("> " + strings.ReplaceAll(r.Note, "\n", " ") + "\n\n")
+	}
+
+	r.writeAccuracy(&b)
+	if r.Pool > 0 {
+		b.WriteString("\n# Appendix: every method\n\n")
 	}
 
 	r.writeTop10(&b)
