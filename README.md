@@ -164,6 +164,32 @@ by model, prompt version, query and book text, so a rerun only rates new pairs. 
 `-per-minute` (default 60) pace the LLM calls, and `-judge-dry-run` only counts the ratings a run would ask. The LLM is set as for `cmd/enrich` (`LLM_PROVIDER`, `LLM_URL`,
 `LLM_MODEL`, `LLM_API_KEY`). A full run makes up to 42 × 400 ratings, fewer when the lists overlap.
 
+### Recommendation queries
+
+```sh
+go run ./cmd/bench -recommend -judge-cache bench-recommend.jsonl -o recommend.md
+```
+
+The other benchmarks look for a known book. This one asks what search is for: 70 queries in which a reader asks for a
+kind of book (`internal/bench/recommendation-queries.json`). There are 10 per category (plot, vibe, new experience,
+discovering something, like a book or author, character-driven, practical constraints), in 4 lengths, and none
+describes one specific book.
+
+It compares four methods:
+- description vectors;
+- keyword vectors;
+- each of them with its top 30 re-ranked, as the search does.
+
+An LLM judges every work in each method's top 100 as a recommendation for the reader (`RecommendationRubric`): an
+overall rating from 0 to 3, and a score from 0 to 2 for each dimension the query asks about (plot, mood, place, era,
+subject, character, style, constraints). A book the reader names as already read counts as 0.
+
+The report leads with the relevance of the top 10: mean rating, share rated 2 or more and nDCG@10, overall, by
+category, by query length and by dimension. It also has bands of ranks, wins per query, examples and latency.
+Queries hit by known catalogue limits, such as translations recorded as English, are flagged and reported apart.
+
+Rating and re-ranking run at once. The report is written once the ratings are in, for the methods without
+re-ranking, then again with every method. Use a separate `-judge-cache`: the rubric differs from `-judge`'s.
 ### Effect of the re-ranker
 
 ```sh
