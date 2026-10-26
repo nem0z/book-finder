@@ -175,21 +175,30 @@ kind of book (`internal/bench/recommendation-queries.json`). There are 10 per ca
 discovering something, like a book or author, character-driven, practical constraints), in 4 lengths, and none
 describes one specific book.
 
-It compares four methods:
-- description vectors;
-- keyword vectors;
-- each of them with its top 30 re-ranked, as the search does.
+It evaluates the search's pipeline in two stages:
+- retrieval: the top `-recommend-pool` works (default 50) of keyword vectors, judged as a pool, whatever their order;
+- re-ranking of that pool, judged on the final top 10.
 
-An LLM judges every work in each method's top 100 as a recommendation for the reader (`RecommendationRubric`): an
-overall rating from 0 to 3, and a score from 0 to 2 for each dimension the query asks about (plot, mood, place, era,
-subject, character, style, constraints). A book the reader names as already read counts as 0.
+An LLM judges every work in the top 100 of description and keyword vectors as a recommendation for the reader
+(`RecommendationRubric`): an overall rating from 0 to 3, and a score from 0 to 2 for each dimension the query asks
+about (plot, mood, place, era, subject, character, style, constraints). A book the reader names as already read
+counts as 0.
 
-The report leads with the relevance of the top 10: mean rating, share rated 2 or more and nDCG@10, overall, by
-category, by query length and by dimension. It also has bands of ranks, wins per query, examples and latency.
-Queries hit by known catalogue limits, such as translations recorded as English, are flagged and reported apart.
+The report leads with the accuracy of the pipeline:
+- the pool: relevant works (rated 2 or more) per query, and the queries with at least 10 of them;
+- the final top 10: mean rating, shares rated 2 or more, 3 and 0, nDCG@10, and the queries with ≥5 and ≥8 relevant works;
+- how well re-ranking uses the pool: relevant works in the top 10 against those the pool could put there;
+- these by category, by query length and by dimension;
+- the 10 worst queries, each with its top 5 and a likely cause: ranking (the pool has relevant works the top 10
+  misses), retrieval (other searches found relevant works the pool lacks) or a catalogue gap.
 
-Rating and re-ranking run at once. The report is written once the ratings are in, for the methods without
-re-ranking, then again with every method. Use a separate `-judge-cache`: the rubric differs from `-judge`'s.
+An appendix compares description vectors, keyword vectors and the pipeline: bands of ranks, wins per query, examples
+and latency. Queries hit by known catalogue limits, such as translations recorded as English, are flagged and
+reported apart.
+
+Rating and re-ranking run at once. The report is written once the ratings are in, without re-ranking, then again
+with it. Use a separate `-judge-cache`: the rubric differs from `-judge`'s.
+
 ### Effect of the re-ranker
 
 ```sh
