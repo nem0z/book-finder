@@ -103,6 +103,42 @@ For Docker, put the key in a `.env` file next to `docker-compose.yml` (git-ignor
 VOYAGE_API_KEY=pa-...
 ```
 
+## Benchmark
+
+```sh
+go run ./cmd/bench -o bench.md
+```
+
+Evaluates the search on 70 queries in which a reader asks for a kind of book (`internal/bench/queries.json`): 10 per
+category (plot, vibe, new experience, discovering something, like a book or author, character-driven, practical
+constraints), in lengths S to XL. It runs the search as configured (`-retrieval`, `-candidates`, the re-ranker, with
+the same flags and environment as `cmd/search`) in two stages:
+- retrieval: the top `-candidates` (50), the pool the re-ranker orders, judged as a whole;
+- re-ranking: the final top 10, which is what a reader sees.
+
+An LLM rates the top 100 of each query (`-depth`) as a recommendation for that reader: 0 to 3 overall, and 0 to 2
+on each dimension the query asks about (plot, mood, place, era, subject, character, style, constraints). The ranks
+below the pool tell a retrieval miss from a gap in the catalogue. The report gives:
+- relevant works (rated 2 or 3) in the pool;
+- the final top 10: mean rating, shares rated 2–3, 3 and 0, nDCG@10, queries with at least 5 and 8 relevant works;
+- how many of the relevant works the pool could put in the top 10 the re-ranker puts there, and the effect of
+  re-ranking;
+- the same by category, query length and dimension;
+- the 10 worst queries with their top 5 and a likely cause: ranking, retrieval or a possible catalogue gap.
+
+The LLM is set by `LLM_PROVIDER`, `LLM_URL`, `LLM_MODEL` and `LLM_API_KEY`, as in `internal/llm`: `azure`, `ollama` or
+`copilot`. For Copilot (e.g. `LLM_MODEL=claude-haiku-5.5`, billed to the signed-in GitHub account, or the one of a
+token in `LLM_API_KEY`), build the Copilot runtime into the command first with `go tool bundler --output cmd/bench`,
+or set `COPILOT_CLI_PATH`.
+
+Ratings are cached in `bench-judgments.jsonl` (`-judge-cache`) by model, rubric version, query and book text, so a
+rerun only rates new results; `-dry-run` counts them. `-concurrency` (4) and `-per-minute` (60) pace the LLM. A first
+run makes up to 7,000 ratings (70 × 100), about 2 hours at 60 a minute.
+
+The re-ranker's scores are cached in `bench-rerank-scores.jsonl` (`-rerank-cache`). On Voyage's free tier, pace the
+calls with `-rerank-chunk 20 -rerank-per-minute 3 -rerank-tokens-per-minute 8000`; the waits don't count in the
+re-rank times. The report is written once the ratings are in, in retrieval order, then again after re-ranking.
+
 ## API
 
 ```sh
