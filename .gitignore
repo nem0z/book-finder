@@ -11,3 +11,7 @@
 
 # Copilot runtime built into the commands by `go tool bundler` (see README)
 cmd/*/zcopilot*
+
+# Caches of cmd/bench
+bench-judgments.jsonl
+bench-rerank-scores.jsonl
