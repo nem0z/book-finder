@@ -24,6 +24,7 @@ English and 67% when it is in another language (about 1% of works).
 | `ingest_runs` | load run | source files, counts |
 | `work_embeddings` | work with a vector | EmbeddingGemma vector (`halfvec(768)`), model, hash of the embedded text |
 | `work_keywords` | work with LLM keywords | keywords, setting places, setting era (`era_from`/`era_to`, label), themes, protagonist type, all of them as `keywords_tsv`; model, hash of the extracted text |
+| `work_keyword_embeddings` | work with LLM keywords | EmbeddingGemma vector of the keywords (`halfvec(768)`), model, hash of the embedded text |
 
 Keys are Open Library IDs without the path prefix (`OL45804W`, `OL23919A`), so any row maps back to
 `https://openlibrary.org/works/<id>`.
@@ -42,6 +43,7 @@ with a page count, then an ISBN-13, then a cover; ties go to the most recent edi
 | Popularity ordering | B-tree on `want_to_read + currently_reading + already_read + rating_count` |
 | Joins / lookups | `work_authors(author_id)`, `works(isbn_13)` |
 | Semantic search | HNSW (cosine) on `work_embeddings.embedding` |
+| Semantic search on LLM keywords (default retrieval) | HNSW (cosine) on `work_keyword_embeddings.embedding` |
 
 `work_embeddings` has no foreign key to `works` and its index is not rebuilt by the loader: vectors take hours to
 compute, so they survive catalogue reloads, and only works whose embedded text changed are computed again.
@@ -49,6 +51,9 @@ compute, so they survive catalogue reloads, and only works whose embedded text c
 `work_keywords` works the same way: an LLM extracts the keywords from each work's title, authors and description
 (`internal/enrich`), which takes hours and costs money. Only works with a vector get keywords, so keyword and vector
 search cover the same catalogue. The setting era is when the story takes place, not when the book was published.
+`work_keyword_embeddings` holds one vector of each work's keywords, which search compares with the query's vector;
+it survives reloads too. Migration `006` was a full-text index on `keywords_tsv` for a keyword search that was not
+kept, so there is no `006` file: databases that applied it keep the index, which is unused.
 
 The secondary indexes live in their own migration (`003_indexes.sql`) so the loader can drop them before a bulk load
 and rebuild them afterwards, which is much faster than maintaining them row by row.

@@ -59,8 +59,8 @@ region keeps the GPU option open. Prices compared on 2026-10-19 (USD list prices
 - **While in use:** Ollama, api and web cost a few cents an hour, billed per second from when they start until they
   scale to zero, and mostly covered by the monthly free allowance (180,000 vCPU-seconds and 360,000 GiB-seconds per
   subscription).
-- **Voyage AI:** billed per token: the query's tokens times the 30 candidates, plus the candidates' cards. The first
-  200 million tokens are free, then `rerank-3` costs $0.05 per million tokens.
+- **Voyage AI:** billed per token: the query's tokens times the 50 candidates, plus the candidates' cards (about
+  8,000 tokens per search). The first 200 million tokens are free, then `rerank-3` costs $0.05 per million tokens.
 - **Local re-ranker instead:** about $0.40 an hour on CPU (4 vCPUs and 8 GiB) or $0.55 on a T4, while it is up.
 
 To pause the database between uses (it restarts automatically after 7 days):
@@ -134,7 +134,8 @@ az containerapp revision restart -g bookfinder-rg -n api --revision (az containe
   switching, because the template doesn't remove apps and Azure can't drop a workload profile that an app uses).
 - `restore-db.ps1` dumps the local database, uploads it as an image, and restores it with a one-off Container Apps
   job, since the server is only reachable from inside the private network. It replaces what is in the Azure
-  database.
+  database, keyword vectors included (`work_keyword_embeddings`): search uses them, and works like before
+  (description vectors) on a database without them.
 
 ## Check before deploying
 

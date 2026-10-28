@@ -9,9 +9,11 @@ import (
 )
 
 const (
-	// DefaultCandidates is how many vector results are re-ranked. Measured on this project's test
-	// queries with gte-reranker-modernbert-base: 30 ranks as well as 50, in two thirds of the time.
-	DefaultCandidates = 30
+	// DefaultCandidates is how many retrieved works are re-ranked. On this project's recommendation
+	// benchmark (70 queries, an LLM judge), the 50 nearest keyword vectors held 29 relevant books per query,
+	// and re-ranking them with Voyage rerank-3 put 8.1 of the 9.6 the top 10 could hold there. Re-ranking 50
+	// reads about 8,000 tokens: Voyage's free tier (10,000 tokens per minute) allows about one search per minute.
+	DefaultCandidates = 50
 
 	// cardDescriptionBytes is how much of the description the re-ranker reads. 600 bytes kept the full
 	// quality gain; 300 lost half of it; 2,000 doubled the time for no gain.
