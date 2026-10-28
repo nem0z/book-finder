@@ -23,6 +23,7 @@ English and 67% when it is in another language (about 1% of works).
 | `work_authors` | work–author link | position (author order) |
 | `ingest_runs` | load run | source files, counts |
 | `work_embeddings` | work with a vector | EmbeddingGemma vector (`halfvec(768)`), model, hash of the embedded text |
+| `work_keywords` | work with LLM keywords | keywords, setting places, setting era (`era_from`/`era_to`, label), themes, protagonist type, all of them as `keywords_tsv`; model, hash of the extracted text |
 
 Keys are Open Library IDs without the path prefix (`OL45804W`, `OL23919A`), so any row maps back to
 `https://openlibrary.org/works/<id>`.
@@ -44,6 +45,10 @@ with a page count, then an ISBN-13, then a cover; ties go to the most recent edi
 
 `work_embeddings` has no foreign key to `works` and its index is not rebuilt by the loader: vectors take hours to
 compute, so they survive catalogue reloads, and only works whose embedded text changed are computed again.
+
+`work_keywords` works the same way: an LLM extracts the keywords from each work's title, authors and description
+(`internal/enrich`), which takes hours and costs money. Only works with a vector get keywords, so keyword and vector
+search cover the same catalogue. The setting era is when the story takes place, not when the book was published.
 
 The secondary indexes live in their own migration (`003_indexes.sql`) so the loader can drop them before a bulk load
 and rebuild them afterwards, which is much faster than maintaining them row by row.
