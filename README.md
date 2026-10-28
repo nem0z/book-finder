@@ -73,16 +73,29 @@ go run ./cmd/search "a melancholic story about memory and loss"
 go run ./cmd/search -max-year 1980 -lang jpn -n 5 "a lonely man drifting through life"
 ```
 
-Finds the 30 books whose vector is closest to the query's (`-candidates`), then re-orders them with a re-ranker
+Finds the 50 books closest in meaning to the query (`-candidates`), then re-orders them with a re-ranker
 that reads the query and each book together, and prints the best 10 (`-n`). Optional filters on first
 publication year, page count and original language; `-json` for machine-readable output. Only works with a
 vector are searched.
 
+`-retrieval` (or `RETRIEVAL`) chooses how the candidates are found:
+- `keyword-vectors-first` (default): the books whose keyword vector is nearest to the query's, plus, among the books
+  whose description vector is nearest, those without a keyword vector, merged by similarity. A keyword vector embeds
+  the keywords an LLM extracted from the book's description (places, period, themes, mood, type of protagonist; see
+  [docs/schema.md](docs/schema.md)). Books without keywords stay findable, and on a database without keyword vectors
+  it works like `vector`.
+- `vector`: the nearest description vectors.
+- `keyword-vectors`: the nearest keyword vectors only.
+
+The query is embedded as typed in every case. On 70 recommendation queries rated by an LLM, keyword vectors put more
+relevant books in the top 10 than description vectors (68% vs 59% before re-ranking), and re-ranking their top 50
+brought it to 81% (see [Benchmark](#benchmark)).
+
 The re-ranker is [Voyage AI](https://docs.voyageai.com/docs/reranker)'s `rerank-3` when `VOYAGE_API_KEY` is set
 (`-voyage-model` or `VOYAGE_MODEL` to change the model), as on Azure. Without a key, it is the local
 `gte-reranker-modernbert-base` in the `reranker` service of `docker-compose.yml` (`-reranker` or `RERANKER_URL`),
-which adds about 3 s per search on a 16-core CPU. `-no-rerank` skips re-ranking and ranks by vector similarity
-only.
+which adds about 3 s per search on a 16-core CPU. `-no-rerank` skips re-ranking and keeps the retrieval order.
+With Voyage's free tier (10,000 tokens per minute), re-ranking 50 candidates allows about one search per minute.
 
 For Docker, put the key in a `.env` file next to `docker-compose.yml` (git-ignored):
 
