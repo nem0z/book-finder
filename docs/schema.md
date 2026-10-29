@@ -49,8 +49,8 @@ with a page count, then an ISBN-13, then a cover; ties go to the most recent edi
 compute, so they survive catalogue reloads, and only works whose embedded text changed are computed again.
 
 `work_keywords` works the same way: an LLM extracts the keywords from each work's title, authors and description
-(`internal/enrich`), which takes hours and costs money. Only works with a vector get keywords, so keyword and vector
-search cover the same catalogue. The setting era is when the story takes place, not when the book was published.
+(`cmd/index`), which takes hours and costs money. Only eligible works get keywords: a description of at least 300
+characters, without links or HTML. The setting era is when the story takes place, not when the book was published.
 `work_keyword_embeddings` holds one vector of each work's keywords, which search compares with the query's vector;
 it survives reloads too. Migration `006` was a full-text index on the keywords for a keyword search that was not kept,
 so there is no `006` file; `008` drops that index, where it exists, and the full-text column of `work_keywords`.

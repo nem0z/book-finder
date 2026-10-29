@@ -460,8 +460,10 @@ func (r *runner) report(msg string) {
 		"to_embed", s.ToExtract + s.ToEmbed, "failed", s.Failed, "requests", s.Requests, "pruned", s.Pruned,
 		"extracted_per_minute", fmt.Sprintf("%.0f", float64(s.Extracted)/minutes),
 		"embedded_per_minute", fmt.Sprintf("%.0f", float64(s.Embedded)/minutes)}
-	if left := eta(s, minutes); left > 0 {
+	if left := eta(s, minutes); left >= time.Minute {
 		attrs = append(attrs, "eta", left.Round(time.Minute))
+	} else if left > 0 {
+		attrs = append(attrs, "eta", left.Round(time.Second))
 	}
 
 	if p, ok := r.client.(interface{ Stats() llm.PacedStats }); ok {

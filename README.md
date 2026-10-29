@@ -56,7 +56,43 @@ go run ./cmd/ingest \
 It applies the migrations, then rebuilds the catalogue from scratch: the existing `works`, `authors` and
 `work_authors` rows are replaced. See [docs/schema.md](docs/schema.md) for what is kept.
 
-## Compute the vectors
+## Index the catalogue
+
+```sh
+LLM_PROVIDER=copilot LLM_MODEL=claude-haiku-5.5 go run ./cmd/index -dry-run
+LLM_PROVIDER=copilot LLM_MODEL=claude-haiku-5.5 go run ./cmd/index
+```
+
+Makes the catalogue searchable, in one step after `cmd/ingest`. For each eligible work (a description of at least
+300 characters, without links or HTML), most-rated first, an LLM extracts keywords from its title, authors and
+description: places, period, themes, tropes, mood, type of protagonist (see [docs/schema.md](docs/schema.md)).
+Ollama then embeds them into the work's keyword vector, which search compares with the query's.
+
+Requests for several works (`-per-request`, 5) run at once (`-concurrency`, 4), and each work's keywords are
+embedded as soon as they arrive (`-embed-batch` texts per Ollama call), so the step takes about as long as the
+slower of the two. Ollama embeds about 500 works a minute on a 16-core CPU; at the default 60 requests a minute
+(`-per-minute`), the LLM extracts up to 300. The whole catalogue (about 160,000 works) takes about 9 hours, and its
+extraction was estimated at about 2,800 Copilot AI credits.
+
+The step only does what is missing or stale. A work's keywords are extracted again when its title, authors or
+description change, or with another LLM model or prompt; its vector is computed again when its keywords or the
+embedding model change. So it can be stopped with Ctrl+C and run again, and after a reload it only indexes new or
+edited works. `-dry-run` counts what it would do; `-limit` indexes the N most-rated works only. A full run ends
+by deleting the keywords and vectors of works no longer in the catalogue.
+
+A work whose extraction fails 3 times (`-attempts`; the last asks for it alone) is logged and left for the next run.
+On a rate limit (429), the step waits as asked, or longer each time, and halves its concurrency for a while
+(`-retries`, `-timeout`). The Copilot runtime is restarted every 30 minutes (`-restart-every`), as it slows down
+over long runs, and after 5 failures in a row (`-restart-after`).
+
+The LLM is set by `LLM_PROVIDER` (`azure`, `ollama` or `copilot`), `LLM_URL`, `LLM_MODEL` and `LLM_API_KEY`. The
+model is part of the keywords' hash: another model extracts every work again. Copilot is billed to the signed-in
+GitHub account, or to the account of a token in `LLM_API_KEY`. Build the Copilot runtime into the command first
+with `go tool bundler --output cmd/index`, or set `COPILOT_CLI_PATH`.
+
+## Compute the description vectors
+
+Description vectors are being replaced by keyword vectors; search only uses them for works without a keyword vector.
 
 ```sh
 go run ./cmd/embed -limit 10000
