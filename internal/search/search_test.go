@@ -35,7 +35,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 
-	if _, err := pool.Exec(ctx, "TRUNCATE works, work_authors, authors, work_embeddings"); err != nil {
+	if _, err := pool.Exec(ctx, "TRUNCATE works, work_authors, authors, work_keyword_embeddings"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -55,7 +55,7 @@ func (f fakeQuery) Model() string { return f.model }
 
 func (f fakeQuery) EmbedQuery(context.Context, string) ([]float32, error) { return axis(1, 1), nil }
 
-func TestSemantic(t *testing.T) {
+func TestKeywordVectors(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `INSERT INTO works (id, title, description, first_publish_year, page_count, original_language, genres, subjects, cover_id) VALUES
@@ -72,7 +72,7 @@ func TestSemantic(t *testing.T) {
 			model = "other"
 		}
 
-		if _, err := pool.Exec(ctx, "INSERT INTO work_embeddings (work_id, model, content_hash, embedding) VALUES ($1, $2, 'h', $3::halfvec)",
+		if _, err := pool.Exec(ctx, "INSERT INTO work_keyword_embeddings (work_id, model, content_hash, embedding) VALUES ($1, $2, 'h', $3::halfvec)",
 			id, model, embed.VectorLiteral(v)); err != nil {
 			t.Fatal(err)
 		}
@@ -80,7 +80,7 @@ func TestSemantic(t *testing.T) {
 
 	ids := func(f Filters, limit int) []string {
 		t.Helper()
-		res, err := Semantic(ctx, pool, fakeQuery{"fake"}, "a query", f, limit)
+		res, err := KeywordVectors(ctx, pool, fakeQuery{"fake"}, "a query", f, limit)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -109,12 +109,22 @@ func TestSemantic(t *testing.T) {
 		t.Errorf("year and language: %v", got)
 	}
 
-	res, err := Semantic(ctx, pool, fakeQuery{"fake"}, "a query", Filters{}, 1)
+	res, err := KeywordVectors(ctx, pool, fakeQuery{"fake"}, "a query", Filters{}, 1)
 	if err != nil || len(res) != 1 || !slices.Equal(res[0].Tags, []string{"Thriller", "Oslo"}) || res[0].CoverID != 7 {
 		t.Errorf("tags and cover: %+v, %v", res, err)
 	}
 
-	if _, err := Semantic(ctx, pool, fakeQuery{"fake"}, " ", Filters{}, 0); !errors.Is(err, ErrEmptyQuery) {
+	if _, err := KeywordVectors(ctx, pool, fakeQuery{"fake"}, " ", Filters{}, 0); !errors.Is(err, ErrEmptyQuery) {
 		t.Errorf("empty query: %v", err)
+	}
+
+	// The engine re-ranks the retrieved works: here, the last one wins.
+	e := &Engine{Pool: pool, Embedder: fakeQuery{"fake"}, Reranker: &fakeReranker{scores: []float64{0, 0, 1}}}
+	if res, err := e.Search(ctx, "a query", Filters{}, 1); err != nil || len(res) != 1 || res[0].ID != "OL3W" {
+		t.Errorf("re-ranked: %+v, %v", res, err)
+	}
+
+	if res, err := e.Retrieve(ctx, "a query", Filters{}, 10); err != nil || len(res) != 3 || res[0].ID != "OL1W" {
+		t.Errorf("retrieved: %+v, %v", res, err)
 	}
 }

@@ -33,7 +33,6 @@ func main() {
 	reranker := flag.String("reranker", envOr("RERANKER_URL", rerank.DefaultURL), "local re-ranker URL, used without VOYAGE_API_KEY (env RERANKER_URL)")
 	voyageModel := flag.String("voyage-model", envOr("VOYAGE_MODEL", rerank.DefaultVoyageModel), "Voyage re-ranker, used when VOYAGE_API_KEY is set (env VOYAGE_MODEL)")
 	noRerank := flag.Bool("no-rerank", false, "keep the retrieval order")
-	retrieval := flag.String("retrieval", envOr("RETRIEVAL", string(search.RetrieveKeywordVectorsFirst)), "how candidates are found, as in cmd/search (env RETRIEVAL)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -45,20 +44,20 @@ func main() {
 		rr, rrName = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
 	}
 
-	if err := run(ctx, *addr, *url, *ollama, search.Retrieval(*retrieval), rr, rrName); err != nil {
+	if err := run(ctx, *addr, *url, *ollama, rr, rrName); err != nil {
 		slog.Error("api failed", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, addr, url, ollama string, retrieval search.Retrieval, rr search.Reranker, rrName string) error {
+func run(ctx context.Context, addr, url, ollama string, rr search.Reranker, rrName string) error {
 	pool, err := db.Connect(ctx, url, nil)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
-	engine := &search.Engine{Pool: pool, Embedder: embed.NewOllama(ollama, embed.DefaultModel), Retrieval: retrieval, Reranker: rr}
+	engine := &search.Engine{Pool: pool, Embedder: embed.NewOllama(ollama, embed.DefaultModel), Reranker: rr}
 
 	srv := &http.Server{
 		Addr:         addr,
@@ -69,7 +68,7 @@ func run(ctx context.Context, addr, url, ollama string, retrieval search.Retriev
 
 	errs := make(chan error, 1)
 	go func() { errs <- srv.ListenAndServe() }()
-	slog.Info("listening", "addr", addr, "retrieval", retrieval, "rerank", rrName)
+	slog.Info("listening", "addr", addr, "rerank", rrName)
 
 	select {
 	case err := <-errs:

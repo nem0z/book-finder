@@ -90,18 +90,6 @@ model is part of the keywords' hash: another model extracts every work again. Co
 GitHub account, or to the account of a token in `LLM_API_KEY`. Build the Copilot runtime into the command first
 with `go tool bundler --output cmd/index`, or set `COPILOT_CLI_PATH`.
 
-## Compute the description vectors
-
-Description vectors are being replaced by keyword vectors; search only uses them for works without a keyword vector.
-
-```sh
-go run ./cmd/embed -limit 10000
-```
-
-Embeds the 10,000 most-rated works with a clean description (at least 300 bytes, no links or HTML) through
-Ollama. Without `-limit` it embeds every eligible work, which takes about 11 hours on a 16-core CPU. It only
-computes missing or outdated vectors, so it can be stopped with Ctrl+C and run again.
-
 ## Search
 
 ```sh
@@ -109,23 +97,15 @@ go run ./cmd/search "a melancholic story about memory and loss"
 go run ./cmd/search -max-year 1980 -lang jpn -n 5 "a lonely man drifting through life"
 ```
 
-Finds the 50 books closest in meaning to the query (`-candidates`), then re-orders them with a re-ranker
-that reads the query and each book together, and prints the best 10 (`-n`). Optional filters on first
-publication year, page count and original language; `-json` for machine-readable output. Only works with a
-vector are searched.
+Finds the 50 books whose keyword vector is nearest to the query's (`-candidates`), then re-orders them with a
+re-ranker that reads the query and each book together, and prints the best 10 (`-n`). A keyword vector embeds the
+keywords an LLM extracted from the book's description (places, period, themes, mood, type of protagonist; see
+[Index the catalogue](#index-the-catalogue)). The query is embedded as typed. Optional filters on first publication
+year, page count and original language; `-json` for machine-readable output. Only indexed works are searched.
 
-`-retrieval` (or `RETRIEVAL`) chooses how the candidates are found:
-- `keyword-vectors-first` (default): the books whose keyword vector is nearest to the query's, plus, among the books
-  whose description vector is nearest, those without a keyword vector, merged by similarity. A keyword vector embeds
-  the keywords an LLM extracted from the book's description (places, period, themes, mood, type of protagonist; see
-  [docs/schema.md](docs/schema.md)). Books without keywords stay findable, and on a database without keyword vectors
-  it works like `vector`.
-- `vector`: the nearest description vectors.
-- `keyword-vectors`: the nearest keyword vectors only.
-
-The query is embedded as typed in every case. On 70 recommendation queries rated by an LLM, keyword vectors put more
-relevant books in the top 10 than description vectors (68% vs 59% before re-ranking), and re-ranking their top 50
-brought it to 81% (see [Benchmark](#benchmark)).
+On 70 recommendation queries rated by an LLM, keyword vectors put more relevant books in the top 10 than vectors of
+the descriptions did (68% vs 59% before re-ranking), and re-ranking their top 50 brought it to 81% (see
+[Benchmark](#benchmark)).
 
 The re-ranker is [Voyage AI](https://docs.voyageai.com/docs/reranker)'s `rerank-3` when `VOYAGE_API_KEY` is set
 (`-voyage-model` or `VOYAGE_MODEL` to change the model), as on Azure. Without a key, it is the local
@@ -147,7 +127,7 @@ go run ./cmd/bench -o bench.md
 
 Evaluates the search on 70 queries in which a reader asks for a kind of book (`internal/bench/queries.json`): 10 per
 category (plot, vibe, new experience, discovering something, like a book or author, character-driven, practical
-constraints), in lengths S to XL. It runs the search as configured (`-retrieval`, `-candidates`, the re-ranker, with
+constraints), in lengths S to XL. It runs the search as configured (`-candidates`, the re-ranker, with
 the same flags and environment as `cmd/search`) in two stages:
 - retrieval: the top `-candidates` (50), the pool the re-ranker orders, judged as a whole;
 - re-ranking: the final top 10, which is what a reader sees.
