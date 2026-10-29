@@ -23,7 +23,7 @@ English and 67% when it is in another language (about 1% of works).
 | `work_authors` | work–author link | position (author order) |
 | `ingest_runs` | load run | source files, counts |
 | `work_embeddings` | work with a vector | EmbeddingGemma vector (`halfvec(768)`), model, hash of the embedded text |
-| `work_keywords` | work with LLM keywords | keywords, setting places, setting era (`era_from`/`era_to`, label), themes, protagonist type, all of them as `keywords_tsv`; model, hash of the extracted text |
+| `work_keywords` | work with LLM keywords | keywords, setting places, setting era (`era_from`/`era_to`, label), themes, protagonist type; model, hash of the extracted text |
 | `work_keyword_embeddings` | work with LLM keywords | EmbeddingGemma vector of the keywords (`halfvec(768)`), model, hash of the embedded text |
 
 Keys are Open Library IDs without the path prefix (`OL45804W`, `OL23919A`), so any row maps back to
@@ -52,8 +52,8 @@ compute, so they survive catalogue reloads, and only works whose embedded text c
 (`internal/enrich`), which takes hours and costs money. Only works with a vector get keywords, so keyword and vector
 search cover the same catalogue. The setting era is when the story takes place, not when the book was published.
 `work_keyword_embeddings` holds one vector of each work's keywords, which search compares with the query's vector;
-it survives reloads too. Migration `006` was a full-text index on `keywords_tsv` for a keyword search that was not
-kept, so there is no `006` file: databases that applied it keep the index, which is unused.
+it survives reloads too. Migration `006` was a full-text index on the keywords for a keyword search that was not kept,
+so there is no `006` file; `008` drops that index, where it exists, and the full-text column of `work_keywords`.
 
 The secondary indexes live in their own migration (`003_indexes.sql`) so the loader can drop them before a bulk load
 and rebuild them afterwards, which is much faster than maintaining them row by row.

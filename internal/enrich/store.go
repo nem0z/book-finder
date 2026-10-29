@@ -25,13 +25,13 @@ LIMIT $4`
 
 const upsertSQL = `
 INSERT INTO work_keywords (work_id, model, content_hash, keywords, setting_places, era_from, era_to, era_label,
-                           themes, protagonist, keywords_tsv)
-VALUES ($1, $2, $3, $4, $5, nullif($6, 0), nullif($7, 0), $8, $9, $10, to_tsvector('english', $11))
+                           themes, protagonist)
+VALUES ($1, $2, $3, $4, $5, nullif($6, 0), nullif($7, 0), $8, $9, $10)
 ON CONFLICT (work_id) DO UPDATE
 SET model = EXCLUDED.model, content_hash = EXCLUDED.content_hash, keywords = EXCLUDED.keywords,
     setting_places = EXCLUDED.setting_places, era_from = EXCLUDED.era_from, era_to = EXCLUDED.era_to,
     era_label = EXCLUDED.era_label, themes = EXCLUDED.themes, protagonist = EXCLUDED.protagonist,
-    keywords_tsv = EXCLUDED.keywords_tsv, created_at = now()`
+    created_at = now()`
 
 const pruneSQL = `DELETE FROM work_keywords k WHERE NOT EXISTS (SELECT 1 FROM works w WHERE w.id = k.work_id)`
 
@@ -98,7 +98,7 @@ func Save(ctx context.Context, pool *pgxpool.Pool, model string, rows []Extracte
 	for _, r := range rows {
 		k := r.Keywords.Normalize()
 		batch.Queue(upsertSQL, r.WorkID, model, r.Hash, k.Keywords, k.Places, k.EraFrom, k.EraTo, k.EraLabel,
-			k.Themes, k.Protagonist, k.Text())
+			k.Themes, k.Protagonist)
 	}
 
 	if err := pool.SendBatch(ctx, batch).Close(); err != nil {
