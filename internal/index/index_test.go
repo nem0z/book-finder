@@ -112,6 +112,9 @@ func insertWorks(t *testing.T, pool *pgxpool.Pool, descriptions ...string) {
 func quiet() Options { return Options{Concurrency: 2, PerRequest: 2, ProgressInterval: -1} }
 
 func TestRun(t *testing.T) {
+	defer func(n int) { pageSize = n }(pageSize)
+	pageSize = 2
+
 	pool := testPool(t)
 	ctx := context.Background()
 	insertWorks(t, pool, "one", "two", "SHORT", "see https://example.com", "five", "NEVER", "seven")

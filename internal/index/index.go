@@ -31,7 +31,6 @@ const (
 	defaultAttempts         = 3
 	defaultEmbedBatch       = 32
 	defaultProgressInterval = 30 * time.Second
-	pageSize                = 1000
 
 	// embedWait is how long the embedder waits for a full batch before embedding what it has.
 	embedWait = 2 * time.Second
@@ -63,7 +62,12 @@ WHERE length(w.description) >= $3
 ORDER BY -w.rating_count, w.id
 LIMIT $4`
 
-var ErrTooManyFailures = errors.New("most extractions fail; check the LLM settings")
+var (
+	ErrTooManyFailures = errors.New("most extractions fail; check the LLM settings")
+
+	// pageSize is how many works are read at once.
+	pageSize = 5000
+)
 
 type Options struct {
 	// Limit > 0 only considers the Limit most-rated eligible works.
@@ -196,8 +200,10 @@ func (r *runner) scan(ctx context.Context, each func(work) bool) (Stats, error) 
 			return s, fmt.Errorf("read works: %w", err)
 		}
 
-		read, stop := 0, false
-		for !stop && rows.Next() {
+		// The page is read whole first, so that no query stays open while workers are busy.
+		before := s.Considered
+		var page []work
+		for rows.Next() {
 			var w work
 			var ratings int
 			var kwHash, vecHash string
@@ -207,7 +213,6 @@ func (r *runner) scan(ctx context.Context, each func(work) bool) (Stats, error) 
 				return s, fmt.Errorf("read works: %w", err)
 			}
 
-			read++
 			s.Considered++
 			negRatings, last = -ratings, w.book.ID
 			w.book.Hash = enrich.ContentHash(r.llmModel, w.book)
@@ -222,7 +227,7 @@ func (r *runner) scan(ctx context.Context, each func(work) bool) (Stats, error) 
 				continue
 			}
 
-			stop = each != nil && !each(w)
+			page = append(page, w)
 		}
 
 		rows.Close()
@@ -230,7 +235,14 @@ func (r *runner) scan(ctx context.Context, each func(work) bool) (Stats, error) 
 			return s, fmt.Errorf("read works: %w", err)
 		}
 
-		if stop || read < size {
+		read := int(s.Considered - before)
+		for _, w := range page {
+			if each != nil && !each(w) {
+				return s, nil
+			}
+		}
+
+		if read < size {
 			return s, nil
 		}
 	}
