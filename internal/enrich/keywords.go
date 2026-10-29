@@ -1,5 +1,5 @@
 // Package enrich extracts keywords from book descriptions with an LLM and stores them in work_keywords,
-// for keyword search.
+// for keyword vectors.
 package enrich
 
 import (
@@ -118,7 +118,7 @@ func (k Keywords) Normalize() Keywords {
 	return k
 }
 
-// Text is every field as one text, for full-text search.
+// Text is every field as one text: what a keyword vector embeds.
 func (k Keywords) Text() string {
 	parts := slices.Concat(k.Keywords, k.Places, k.Themes)
 	for _, s := range []string{k.EraLabel, k.Protagonist} {

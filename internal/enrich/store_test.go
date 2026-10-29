@@ -82,14 +82,13 @@ func TestStore(t *testing.T) {
 
 	var kws []string
 	var eraFrom, eraTo *int16
-	var matches bool
-	if err := pool.QueryRow(ctx, `SELECT keywords, era_from, era_to, keywords_tsv @@ to_tsquery('english', 'orc & shop & thune')
-		FROM work_keywords WHERE work_id = 'OL1W'`).Scan(&kws, &eraFrom, &eraTo, &matches); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT keywords, era_from, era_to
+		FROM work_keywords WHERE work_id = 'OL1W'`).Scan(&kws, &eraFrom, &eraTo); err != nil {
 		t.Fatal(err)
 	}
 
-	if !slices.Equal(kws, []string{"orcs", "coffee shops"}) || eraFrom != nil || eraTo == nil || *eraTo != 1200 || !matches {
-		t.Errorf("stored: %q, %v-%v, matches %v", kws, eraFrom, eraTo, matches)
+	if !slices.Equal(kws, []string{"orcs", "coffee shops"}) || eraFrom != nil || eraTo == nil || *eraTo != 1200 {
+		t.Errorf("stored: %q, %v-%v", kws, eraFrom, eraTo)
 	}
 
 	if p, _ := ReadPending(ctx, pool, "m", nil, Cursor{}, 10); !slices.Equal(ids(p.Books), []string{"OL2W", "OL3W"}) || p.Read != 3 {
