@@ -22,7 +22,6 @@ English and 67% when it is in another language (about 1% of works).
 | `authors` | author of a kept work | name, birth/death date, Wikidata ID |
 | `work_authors` | work–author link | position (author order) |
 | `ingest_runs` | load run | source files, counts |
-| `work_embeddings` | work with a vector | EmbeddingGemma vector (`halfvec(768)`), model, hash of the embedded text |
 | `work_keywords` | work with LLM keywords | keywords, setting places, setting era (`era_from`/`era_to`, label), themes, protagonist type; model, hash of the extracted text |
 | `work_keyword_embeddings` | work with LLM keywords | EmbeddingGemma vector of the keywords (`halfvec(768)`), model, hash of the embedded text |
 
@@ -42,18 +41,22 @@ with a page count, then an ISBN-13, then a cover; ties go to the most recent edi
 | Hard filters | B-tree on `first_publish_year`, `page_count`, `original_language`; GIN on `genres`, `subjects` |
 | Popularity ordering | B-tree on `want_to_read + currently_reading + already_read + rating_count` |
 | Joins / lookups | `work_authors(author_id)`, `works(isbn_13)` |
-| Semantic search | HNSW (cosine) on `work_embeddings.embedding` |
-| Semantic search on LLM keywords (default retrieval) | HNSW (cosine) on `work_keyword_embeddings.embedding` |
+| Semantic search | HNSW (cosine) on `work_keyword_embeddings.embedding` |
 
-`work_embeddings` has no foreign key to `works` and its index is not rebuilt by the loader: vectors take hours to
-compute, so they survive catalogue reloads, and only works whose embedded text changed are computed again.
+`work_keywords` and `work_keyword_embeddings` are filled by `cmd/index` after each load: an LLM extracts the keywords
+from each work's title, authors and description, which takes hours and costs money, and EmbeddingGemma embeds them
+into one vector per work, which search compares with the query's vector. Only eligible works are indexed: a
+description of at least 300 characters, without links or HTML. The setting era is when the story takes place, not
+when the book was published.
 
-`work_keywords` works the same way: an LLM extracts the keywords from each work's title, authors and description
-(`cmd/index`), which takes hours and costs money. Only eligible works get keywords: a description of at least 300
-characters, without links or HTML. The setting era is when the story takes place, not when the book was published.
-`work_keyword_embeddings` holds one vector of each work's keywords, which search compares with the query's vector;
-it survives reloads too. Migration `006` was a full-text index on the keywords for a keyword search that was not kept,
-so there is no `006` file; `008` drops that index, where it exists, and the full-text column of `work_keywords`.
+Neither table has a foreign key to `works`, and the vectors' index is not rebuilt by the loader: they survive
+catalogue reloads, and only works whose text (or keywords) changed are indexed again.
+
+Migrations that removed what search no longer uses:
+- `006`, a full-text index on the keywords for a keyword search that was not kept, has no file; `008` drops that
+  index, where it exists, and the full-text column of `work_keywords`.
+- `009` drops `work_embeddings`, the vectors of the descriptions, which keyword vectors replaced. It stops with an
+  error when a work with a description vector has no keyword vector: run `cmd/index` first.
 
 The secondary indexes live in their own migration (`003_indexes.sql`) so the loader can drop them before a bulk load
 and rebuild them afterwards, which is much faster than maintaining them row by row.

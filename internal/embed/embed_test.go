@@ -10,37 +10,16 @@ import (
 	"testing"
 )
 
-func TestDocument(t *testing.T) {
-	d := Document(Book{
-		Title: "The Thirst", Subtitle: "A Harry Hole Novel", Authors: []string{"Jo Nesbø"},
-		Genres: []string{"Fiction", "Thriller"}, Subjects: []string{"thriller", "Oslo", " "},
-		Description: "Harry Hole hunts a killer.",
-	})
-
-	if d.Title != "The Thirst: A Harry Hole Novel" {
-		t.Errorf("title: %q", d.Title)
-	}
-
-	if want := "By Jo Nesbø\nTopics: Thriller; Oslo\n\nHarry Hole hunts a killer."; d.Text != want {
-		t.Errorf("text: %q", d.Text)
-	}
-
-	if d := Document(Book{Title: "T"}); d.Text != "" {
-		t.Errorf("empty book text: %q", d.Text)
+func TestTopics(t *testing.T) {
+	got := Topics([]string{"Fiction", "Thriller"}, []string{"thriller", "Oslo", " "})
+	if strings.Join(got, "; ") != "Thriller; Oslo" {
+		t.Errorf("topics: %q", got)
 	}
 }
 
-func TestTruncate(t *testing.T) {
-	if got := truncate("one two three", 9); got != "one two" {
-		t.Errorf("word boundary: %q", got)
-	}
-
-	if got := truncate(strings.Repeat("a", 20), 10); got != strings.Repeat("a", 10) {
-		t.Errorf("no boundary: %q", got)
-	}
-
-	if got := truncate("ééééé", 3); got != "é" {
-		t.Errorf("utf-8: %q", got)
+func TestVectorLiteral(t *testing.T) {
+	if got := VectorLiteral([]float32{0.5, -1, 0}); got != "[0.5,-1,0]" {
+		t.Errorf("got %q", got)
 	}
 }
 

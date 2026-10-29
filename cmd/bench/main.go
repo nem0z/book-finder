@@ -28,7 +28,6 @@ import (
 
 type config struct {
 	url, ollama, queries, out string
-	retrieval                 search.Retrieval
 	candidates, depth         int
 
 	rr                 search.Reranker
@@ -52,7 +51,6 @@ func main() {
 	var c config
 	flag.StringVar(&c.url, "db", envOr("DATABASE_URL", db.DefaultURL), "Postgres connection URL (env DATABASE_URL)")
 	flag.StringVar(&c.ollama, "ollama", envOr("OLLAMA_URL", embed.DefaultOllamaURL), "Ollama URL (env OLLAMA_URL)")
-	retrieval := flag.String("retrieval", envOr("RETRIEVAL", string(search.RetrieveKeywordVectorsFirst)), "how candidates are found, as in cmd/search (env RETRIEVAL)")
 	flag.IntVar(&c.candidates, "candidates", search.DefaultCandidates, "retrieved works re-ranked: the pool")
 	flag.IntVar(&c.depth, "depth", bench.DefaultDepth, "retrieved works rated per query; those below the pool tell retrieval misses from catalogue gaps")
 	reranker := flag.String("reranker", envOr("RERANKER_URL", rerank.DefaultURL), "local re-ranker URL, used without VOYAGE_API_KEY (env RERANKER_URL)")
@@ -70,7 +68,6 @@ func main() {
 	flag.IntVar(&c.perMinute, "per-minute", 60, "at most this many ratings per minute (0: no cap)")
 	flag.Parse()
 
-	c.retrieval = search.Retrieval(*retrieval)
 	if !*noRerank {
 		c.rr, c.rrName = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
 		slog.Info("re-ranker", "name", c.rrName)
@@ -110,7 +107,7 @@ func run(ctx context.Context, c config) error {
 	defer closeJudge()
 
 	start := time.Now()
-	e := &search.Engine{Pool: pool, Embedder: embed.NewOllama(c.ollama, embed.DefaultModel), Retrieval: c.retrieval}
+	e := &search.Engine{Pool: pool, Embedder: embed.NewOllama(c.ollama, embed.DefaultModel)}
 	retrieve := func(ctx context.Context, query string, n int) ([]search.Result, error) {
 		return e.Retrieve(ctx, query, search.Filters{}, n)
 	}
@@ -212,9 +209,8 @@ func openJudge(c config) (llm.Config, *bench.Judge, func(), error) {
 
 // describe says what was searched and how.
 func describe(ctx context.Context, pool *pgxpool.Pool, c config) (string, error) {
-	var vectors, keywordVectors int
-	if err := pool.QueryRow(ctx, "SELECT (SELECT count(*) FROM work_embeddings), (SELECT count(*) FROM work_keyword_embeddings)").
-		Scan(&vectors, &keywordVectors); err != nil {
+	var keywordVectors int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM work_keyword_embeddings").Scan(&keywordVectors); err != nil {
 		return "", err
 	}
 
@@ -223,8 +219,8 @@ func describe(ctx context.Context, pool *pgxpool.Pool, c config) (string, error)
 		rr = "re-ranked by " + c.rrName
 	}
 
-	return fmt.Sprintf("Retrieval %s over %d works with a description vector, %d with a keyword vector; the top %d %s; "+
-		"the top %d rated.", c.retrieval, vectors, keywordVectors, c.candidates, rr, max(c.depth, c.candidates)), nil
+	return fmt.Sprintf("Keyword vectors of %d works; the top %d %s; the top %d rated.", keywordVectors, c.candidates, rr,
+		max(c.depth, c.candidates)), nil
 }
 
 // write writes a report to the file at path, or to stdout when path is empty.

@@ -134,8 +134,9 @@ az containerapp revision restart -g bookfinder-rg -n api --revision (az containe
   switching, because the template doesn't remove apps and Azure can't drop a workload profile that an app uses).
 - `restore-db.ps1` dumps the local database, uploads it as an image, and restores it with a one-off Container Apps
   job, since the server is only reachable from inside the private network. It replaces what is in the Azure
-  database, keyword vectors included (`work_keyword_embeddings`): search uses them, and works like before
-  (description vectors) on a database without them.
+  database, schema included: Azure runs no migrations. Search reads only keyword vectors (`work_keyword_embeddings`),
+  so before deploying a version without description vectors (migration `009`), run `cmd/migrate` and `cmd/index`
+  locally, then `restore-db.ps1`; a database without keyword vectors returns no results.
 
 ## Check before deploying
 

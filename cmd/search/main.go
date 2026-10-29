@@ -27,7 +27,6 @@ func main() {
 	reranker := flag.String("reranker", envOr("RERANKER_URL", rerank.DefaultURL), "local re-ranker URL, used without VOYAGE_API_KEY (env RERANKER_URL)")
 	voyageModel := flag.String("voyage-model", envOr("VOYAGE_MODEL", rerank.DefaultVoyageModel), "Voyage re-ranker, used when VOYAGE_API_KEY is set (env VOYAGE_MODEL)")
 	noRerank := flag.Bool("no-rerank", false, "keep the retrieval order")
-	retrieval := flag.String("retrieval", envOr("RETRIEVAL", string(search.RetrieveKeywordVectorsFirst)), "how candidates are found: keyword-vectors-first (vectors of the LLM keywords, then description vectors for works without keywords), vector (description vectors) or keyword-vectors (env RETRIEVAL)")
 	candidates := flag.Int("candidates", search.DefaultCandidates, "retrieved works passed to the re-ranker")
 	limit := flag.Int("n", search.DefaultLimit, "number of results")
 	asJSON := flag.Bool("json", false, "print the results as JSON")
@@ -54,7 +53,7 @@ func main() {
 		rr, _ = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
 	}
 
-	results, err := run(ctx, *url, *ollama, rr, search.Retrieval(*retrieval), query, f, *limit, *candidates)
+	results, err := run(ctx, *url, *ollama, rr, query, f, *limit, *candidates)
 	if err != nil {
 		slog.Error("search failed", "err", err)
 		os.Exit(1)
@@ -69,23 +68,23 @@ func main() {
 	print(results)
 }
 
-// run finds candidates by retrieval, then re-orders the best of them with rr when it is set.
-func run(ctx context.Context, url, ollama string, rr search.Reranker, retrieval search.Retrieval, query string, f search.Filters, limit, candidates int) ([]search.Result, error) {
+// run finds the books whose keyword vector is nearest to the query's, then re-orders the best of them with rr,
+// when it is set.
+func run(ctx context.Context, url, ollama string, rr search.Reranker, query string, f search.Filters, limit, candidates int) ([]search.Result, error) {
 	pool, err := db.Connect(ctx, url, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer pool.Close()
 
-	e := &search.Engine{Pool: pool, Embedder: embed.NewOllama(ollama, embed.DefaultModel), Retrieval: retrieval,
-		Reranker: rr, Candidates: candidates}
+	e := &search.Engine{Pool: pool, Embedder: embed.NewOllama(ollama, embed.DefaultModel), Reranker: rr, Candidates: candidates}
 
 	return e.Search(ctx, query, f, limit)
 }
 
 func print(results []search.Result) {
 	if len(results) == 0 {
-		fmt.Println("No results. Has `go run ./cmd/embed` been run?")
+		fmt.Println("No results. Has `go run ./cmd/index` been run?")
 	}
 
 	for i, r := range results {

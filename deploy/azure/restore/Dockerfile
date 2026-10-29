@@ -5,4 +5,4 @@ FROM postgres:17-alpine
 COPY bookfinder.dump /bookfinder.dump
 # --clean --if-exists makes a re-run replace what a previous run restored. Ownership, privileges and comments are
 # skipped: the Azure administrator is not a superuser and cannot set them on extensions.
-CMD ["sh", "-c", "pg_restore --clean --if-exists --no-owner --no-privileges --no-comments --single-transaction --exit-on-error -d \"$PGDATABASE\" /bookfinder.dump && psql -c 'SELECT (SELECT count(*) FROM works) AS works, (SELECT count(*) FROM work_embeddings) AS vectors'"]
+CMD ["sh", "-c", "pg_restore --clean --if-exists --no-owner --no-privileges --no-comments --single-transaction --exit-on-error -d \"$PGDATABASE\" /bookfinder.dump && psql -c 'SELECT (SELECT count(*) FROM works) AS works, (SELECT count(*) FROM work_keyword_embeddings) AS keyword_vectors'"]

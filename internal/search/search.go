@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -22,19 +21,33 @@ const (
 	efSearch = 200
 )
 
-var (
-	// semanticSQL searches the vectors of the descriptions.
-	semanticSQL = nearestSQL("work_embeddings", "")
-
-	// keywordVectorSQL searches the vectors of the LLM keywords.
-	keywordVectorSQL = nearestSQL("work_keyword_embeddings", "")
-
-	// unindexedSQL keeps, of the works whose description vector is nearest, those without a keyword vector.
-	unindexedSQL = nearestSQL("work_embeddings",
-		"WHERE NOT EXISTS (SELECT 1 FROM work_keyword_embeddings k WHERE k.work_id = nearest.id AND k.model = $2)")
-
-	ErrEmptyQuery = errors.New("empty query")
+// keywordVectorSQL returns the $8 works whose keyword vector (work_keyword_embeddings), computed by model $2, is
+// nearest to the $1 vector. Filters are applied while walking the HNSW index (pgvector iterative scans), so
+// strict filters still return up to $8 results. relaxed_order may return rows slightly out of order, hence the
+// outer sort.
+const keywordVectorSQL = `
+WITH nearest AS MATERIALIZED (
+    SELECT w.id, w.title, w.author_names, coalesce(w.first_publish_year, 0) AS year,
+           coalesce(w.page_count, 0) AS pages, coalesce(w.original_language, '') AS lang,
+           w.description, w.genres, w.subjects, coalesce(w.cover_id, 0) AS cover_id, w.rating_count,
+           e.embedding <=> $1::halfvec AS distance
+    FROM work_keyword_embeddings e
+    JOIN works w ON w.id = e.work_id
+    WHERE e.model = $2
+      AND ($3 = 0 OR w.first_publish_year >= $3)
+      AND ($4 = 0 OR w.first_publish_year <= $4)
+      AND ($5 = 0 OR w.page_count >= $5)
+      AND ($6 = 0 OR w.page_count <= $6)
+      AND ($7 = '' OR w.original_language = $7)
+    ORDER BY e.embedding <=> $1::halfvec
+    LIMIT $8
 )
+SELECT id, title, author_names, year, pages, lang, description, genres, subjects, cover_id, rating_count,
+       1 - distance
+FROM nearest
+ORDER BY distance`
+
+var ErrEmptyQuery = errors.New("empty query")
 
 // QueryEmbedder turns a search query into a vector. *embed.Ollama implements it.
 type QueryEmbedder interface {
@@ -60,79 +73,14 @@ type Result struct {
 	Tags             []string `json:"tags"`               // genres then subjects, without generic ones
 	CoverID          int64    `json:"cover_id,omitempty"` // Open Library cover ID
 	RatingCount      int      `json:"rating_count"`
-	Similarity       float64  `json:"similarity"`             // cosine similarity of the vectors searched, 1 = same direction
+	Similarity       float64  `json:"similarity"`             // cosine similarity of the keyword vector, 1 = same direction
 	RerankScore      float64  `json:"rerank_score,omitempty"` // set by Rerank; higher is more relevant
 }
 
-// Semantic returns up to limit works whose description vector is closest to the query's and that match f.
-func Semantic(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query string, f Filters, limit int) ([]Result, error) {
-	lists, err := nearest(ctx, pool, emb, query, f, limit, semanticSQL)
-	if err != nil {
-		return nil, err
-	}
-
-	return lists[0], nil
-}
-
-// KeywordVectors returns up to limit works whose LLM keywords' vector (work_keyword_embeddings) is closest to
-// the query's and that match f.
+// KeywordVectors returns up to limit works matching f whose keyword vector is closest to the query's. A
+// keyword vector embeds the keywords an LLM extracted from the work's description (cmd/index), which find
+// more relevant books than the description itself did.
 func KeywordVectors(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query string, f Filters, limit int) ([]Result, error) {
-	lists, err := nearest(ctx, pool, emb, query, f, limit, keywordVectorSQL)
-	if err != nil {
-		return nil, err
-	}
-
-	return lists[0], nil
-}
-
-// KeywordVectorsFirst returns up to limit works matching f, by keyword vector, which finds more relevant
-// books than the description vector: the works whose keyword vector is closest to the query's, plus the
-// works without keywords among those whose description vector is closest, merged by similarity. Works
-// without keywords stay findable, and while keywords cover the whole catalogue, the second list is
-// (nearly) empty.
-func KeywordVectorsFirst(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query string, f Filters, limit int) ([]Result, error) {
-	lists, err := nearest(ctx, pool, emb, query, f, limit, keywordVectorSQL, unindexedSQL)
-	if err != nil {
-		return nil, err
-	}
-
-	out := append(lists[0], lists[1]...)
-	slices.SortStableFunc(out, func(a, b Result) int { return cmpDesc(a.Similarity, b.Similarity) })
-
-	return out[:min(limit, len(out))], nil
-}
-
-// nearestSQL returns the $8 works whose vector in table, computed by model $2, is nearest to the $1 vector,
-// then keeps those matching where, when set. Filters are applied while walking the HNSW index (pgvector
-// iterative scans), so strict filters still return up to $8 results. relaxed_order may return rows slightly
-// out of order, hence the outer sort.
-func nearestSQL(table, where string) string {
-	return `
-WITH nearest AS MATERIALIZED (
-    SELECT w.id, w.title, w.author_names, coalesce(w.first_publish_year, 0) AS year,
-           coalesce(w.page_count, 0) AS pages, coalesce(w.original_language, '') AS lang,
-           w.description, w.genres, w.subjects, coalesce(w.cover_id, 0) AS cover_id, w.rating_count,
-           e.embedding <=> $1::halfvec AS distance
-    FROM ` + table + ` e
-    JOIN works w ON w.id = e.work_id
-    WHERE e.model = $2
-      AND ($3 = 0 OR w.first_publish_year >= $3)
-      AND ($4 = 0 OR w.first_publish_year <= $4)
-      AND ($5 = 0 OR w.page_count >= $5)
-      AND ($6 = 0 OR w.page_count <= $6)
-      AND ($7 = '' OR w.original_language = $7)
-    ORDER BY e.embedding <=> $1::halfvec
-    LIMIT $8
-)
-SELECT id, title, author_names, year, pages, lang, description, genres, subjects, cover_id, rating_count,
-       1 - distance
-FROM nearest
-` + where + `
-ORDER BY distance`
-}
-
-// nearest embeds query and returns, for each of sqls (nearestSQL queries), up to limit works matching f.
-func nearest(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query string, f Filters, limit int, sqls ...string) ([][]Result, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, ErrEmptyQuery
 	}
@@ -156,25 +104,17 @@ func nearest(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, query s
 		return nil, err
 	}
 
-	lists := make([][]Result, len(sqls))
-	for i, sql := range sqls {
-		rows, err := tx.Query(ctx, sql, embed.VectorLiteral(vec), emb.Model(), f.MinYear, f.MaxYear,
-			f.MinPages, f.MaxPages, f.OriginalLanguage, limit)
-		if err != nil {
-			return nil, fmt.Errorf("search: %w", err)
-		}
-
-		lists[i], err = scanResults(rows)
-		rows.Close()
-		if err != nil {
-			return nil, err
-		}
+	rows, err := tx.Query(ctx, keywordVectorSQL, embed.VectorLiteral(vec), emb.Model(), f.MinYear, f.MaxYear,
+		f.MinPages, f.MaxPages, f.OriginalLanguage, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search: %w", err)
 	}
+	defer rows.Close()
 
-	return lists, nil
+	return scanResults(rows)
 }
 
-// scanResults reads nearestSQL rows.
+// scanResults reads keywordVectorSQL rows.
 func scanResults(rows pgx.Rows) ([]Result, error) {
 	var out []Result
 	for rows.Next() {

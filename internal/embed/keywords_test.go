@@ -3,8 +3,58 @@ package embed
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/nem0z/book-finder/internal/db"
 )
+
+// Set BOOKFINDER_TEST_DATABASE_URL to a disposable database to run the database tests; they empty
+// the catalogue.
+const testDBEnv = "BOOKFINDER_TEST_DATABASE_URL"
+
+// fakeEmbedder returns a unit vector and records the titles of what it embedded.
+type fakeEmbedder struct{ titles []string }
+
+func (f *fakeEmbedder) Model() string { return "fake" }
+
+func (f *fakeEmbedder) EmbedDocuments(_ context.Context, docs []Doc) ([][]float32, error) {
+	vecs := make([][]float32, len(docs))
+	for i, d := range docs {
+		f.titles = append(f.titles, d.Title)
+		vecs[i] = make([]float32, Dims)
+		vecs[i][0] = 1
+	}
+
+	return vecs, nil
+}
+
+func testPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	url := os.Getenv(testDBEnv)
+	if url == "" {
+		t.Skipf("%s not set", testDBEnv)
+	}
+
+	ctx := context.Background()
+	pool, err := db.Connect(ctx, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	if _, err := db.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := pool.Exec(ctx, "TRUNCATE works, work_authors, authors, work_keyword_embeddings"); err != nil {
+		t.Fatal(err)
+	}
+
+	return pool
+}
 
 // TestKeywordHash pins the hash of a keyword vector stored by the run that indexed the catalogue, so that a
 // change to it, which would embed every work again, is deliberate.
@@ -22,10 +72,6 @@ func TestKeywordHash(t *testing.T) {
 func TestStoreKeywordVectors(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx, "TRUNCATE work_keyword_embeddings"); err != nil {
-		t.Fatal(err)
-	}
-
 	if _, err := pool.Exec(ctx, "INSERT INTO works (id, title) VALUES ('OL1W', 'One'), ('OL2W', 'Two')"); err != nil {
 		t.Fatal(err)
 	}
