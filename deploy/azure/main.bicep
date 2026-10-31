@@ -24,6 +24,9 @@ param imageTag string = 'latest'
 @allowed(['voyage', 'cpu', 'gpu'])
 param reranker string = 'voyage'
 
+@description('GitHub Copilot model that reads search queries before the vector search, billed to the GitHub account of the token in the key vault (see docs/azure.md); empty to search with the raw query.')
+param queryModel string = 'claude-haiku-5.5'
+
 @description('Minimum replicas of web and api. 1 keeps them running (a few dollars a month each), 0 lets them stop when idle.')
 @allowed([0, 1])
 param webApiMinReplicas int = 0
@@ -41,6 +44,8 @@ var acrPullRole = subscriptionResourceId('Microsoft.Authorization/roleDefinition
 var secretsUserRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
 var secretsOfficerRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
 var voyageSecret = 'voyage-api-key'
+var useQueryModel = !empty(queryModel)
+var copilotSecret = 'copilot-github-token'
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: '${prefix}-logs'
@@ -249,8 +254,9 @@ module api 'app.bicep' = if (deployApps) {
     name: 'api'
     image: '${registryServer}/bookfinder-api:${imageTag}'
     targetPort: 8080
-    cpu: '0.25'
-    memory: '0.5Gi'
+    // The Copilot runtime, which reads the queries, needs more than the api alone.
+    cpu: useQueryModel ? '0.5' : '0.25'
+    memory: useQueryModel ? '1Gi' : '0.5Gi'
     minReplicas: webApiMinReplicas
     secrets: concat(
       [
@@ -259,15 +265,23 @@ module api 'app.bicep' = if (deployApps) {
           value: 'postgres://${dbUser}:${postgresPassword}@${postgres.properties.fullyQualifiedDomainName}:5432/${dbName}?sslmode=require'
         }
       ],
-      // The key is read from the vault (the latest version, refreshed by Container Apps).
-      useVoyage ? [{ name: voyageSecret, keyVaultUrl: '${vault.properties.vaultUri}secrets/${voyageSecret}', identity: identity.id }] : []
+      // Keys are read from the vault (the latest version, refreshed by Container Apps).
+      useVoyage ? [{ name: voyageSecret, keyVaultUrl: '${vault.properties.vaultUri}secrets/${voyageSecret}', identity: identity.id }] : [],
+      useQueryModel ? [{ name: copilotSecret, keyVaultUrl: '${vault.properties.vaultUri}secrets/${copilotSecret}', identity: identity.id }] : []
     )
     env: concat(
       [
         { name: 'DATABASE_URL', secretRef: 'database-url' }
         { name: 'OLLAMA_URL', value: 'http://ollama' }
       ],
-      useVoyage ? [{ name: 'VOYAGE_API_KEY', secretRef: voyageSecret }] : [{ name: 'RERANKER_URL', value: 'http://reranker' }]
+      useVoyage ? [{ name: 'VOYAGE_API_KEY', secretRef: voyageSecret }] : [{ name: 'RERANKER_URL', value: 'http://reranker' }],
+      useQueryModel
+        ? [
+            { name: 'LLM_PROVIDER', value: 'copilot' }
+            { name: 'LLM_MODEL', value: queryModel }
+            { name: 'LLM_API_KEY', secretRef: copilotSecret }
+          ]
+        : []
     )
   }
   dependsOn: [registryPull, vaultRead, database]
@@ -300,4 +314,5 @@ output postgresServer string = postgres.name
 output environmentName string = environment.name
 output vaultName string = vault.name
 output voyageSecretName string = voyageSecret
+output copilotSecretName string = copilotSecret
 output url string = deployApps ? 'https://${web!.outputs.fqdn}' : ''

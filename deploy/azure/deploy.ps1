@@ -19,6 +19,9 @@ param(
     # app on CPU or on a serverless T4 GPU (the T4 scores differently).
     [ValidateSet('voyage', 'cpu', 'gpu')]
     [string]$Reranker = 'voyage',
+    # GitHub Copilot model that reads search queries (its GitHub token in the key vault, see docs/azure.md); empty to
+    # search with the raw query.
+    [string]$QueryModel = 'claude-haiku-5.5',
     # Image tag: the current commit by default.
     [string]$Tag = (git rev-parse --short HEAD),
     # Redeploy the apps without rebuilding the images (they must exist with this tag).
@@ -41,7 +44,7 @@ if ($password -notmatch '^[A-Za-z0-9]{16,}$') {
     throw 'Set BOOKFINDER_DB_PASSWORD to the database password: at least 16 letters and digits. Keep it: every deployment needs the same one.'
 }
 
-$common = @('-g', $ResourceGroup, '-f', $template, '-p', "postgresPassword=$password", "reranker=$Reranker")
+$common = @('-g', $ResourceGroup, '-f', $template, '-p', "postgresPassword=$password", "reranker=$Reranker", "queryModel=$QueryModel")
 
 Write-Host "Infrastructure in $ResourceGroup ($Location)..."
 Invoke-Az group create -n $ResourceGroup -l $Location -o none
@@ -59,20 +62,21 @@ if ($LASTEXITCODE -eq 0 -and $rerankerProfile -and $rerankerProfile -ne $wantedP
 $outputs = Invoke-Az deployment group create -n main @common -p deployApps=false --query properties.outputs -o json | ConvertFrom-Json
 $registry = $outputs.registryName.value
 
-# The Voyage AI key is not part of the deployment: you put it in the key vault yourself, once.
-if ($Reranker -eq 'voyage') {
+# API keys are not part of the deployment: you put them in the key vault yourself, once.
+function Assert-Secret([string]$Secret, [string]$What) {
     $vault = $outputs.vaultName.value
-    $secret = $outputs.voyageSecretName.value
-    az keyvault secret show --vault-name $vault -n $secret --query id -o tsv 2>$null | Out-Null
+    az keyvault secret show --vault-name $vault -n $Secret --query id -o tsv 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw @"
-The Voyage AI key is not in the key vault yet. Put it there (it asks for the key without showing it), then run this
-script again:
-  `$key = Read-Host 'Voyage API key' -AsSecureString
-  az keyvault secret set --vault-name $vault -n $secret -o none --value ([Net.NetworkCredential]::new('', `$key).Password)
+The $What is not in the key vault yet. Put it there (it asks for it without showing it), then run this script again:
+  `$key = Read-Host '$What' -AsSecureString
+  az keyvault secret set --vault-name $vault -n $Secret -o none --value ([Net.NetworkCredential]::new('', `$key).Password)
 "@
     }
 }
+
+if ($Reranker -eq 'voyage') { Assert-Secret $outputs.voyageSecretName.value 'Voyage AI key' }
+if ($QueryModel) { Assert-Secret $outputs.copilotSecretName.value 'GitHub token for Copilot' }
 
 if (-not $SkipImages) {
     $images = [ordered]@{
