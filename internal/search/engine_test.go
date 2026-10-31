@@ -41,7 +41,7 @@ func (r *recordingEmbedder) EmbedQuery(_ context.Context, text string) ([]float3
 func TestInterpret(t *testing.T) {
 	ctx := context.Background()
 	caller := Filters{MaxYear: 1950, OriginalLanguage: "eng"}
-	interpreted := Interpretation{Filters: Filters{MinYear: 2020, MaxPages: 300}, Description: " a blurb "}
+	interpreted := Interpretation{Filters: Filters{MinYear: 2020, MaxPages: 300}, Text: " expat; amsterdam "}
 
 	tests := []struct {
 		name string
@@ -50,11 +50,11 @@ func TestInterpret(t *testing.T) {
 		ok   bool
 		warn bool
 	}{
-		{"none", nil, Interpretation{Filters: caller, Description: "q"}, false, false},
-		{"merged", fakeInterpreter{in: interpreted}, Interpretation{Filters: Filters{MaxYear: 1950, MaxPages: 300, OriginalLanguage: "eng"}, Description: "a blurb"}, true, false},
-		{"empty description", fakeInterpreter{in: Interpretation{Filters: Filters{MinPages: 50}}}, Interpretation{Filters: Filters{MaxYear: 1950, MinPages: 50, OriginalLanguage: "eng"}, Description: "q"}, true, false},
-		{"error", fakeInterpreter{err: errors.New("down")}, Interpretation{Filters: caller, Description: "q"}, false, true},
-		{"timeout", fakeInterpreter{in: interpreted, delay: time.Second}, Interpretation{Filters: caller, Description: "q"}, false, true},
+		{"none", nil, Interpretation{Filters: caller, Text: "q"}, false, false},
+		{"merged", fakeInterpreter{in: interpreted}, Interpretation{Filters: Filters{MaxYear: 1950, MaxPages: 300, OriginalLanguage: "eng"}, Text: "expat; amsterdam"}, true, false},
+		{"empty text", fakeInterpreter{in: Interpretation{Filters: Filters{MinPages: 50}}}, Interpretation{Filters: Filters{MaxYear: 1950, MinPages: 50, OriginalLanguage: "eng"}, Text: "q"}, true, false},
+		{"error", fakeInterpreter{err: errors.New("down")}, Interpretation{Filters: caller, Text: "q"}, false, true},
+		{"timeout", fakeInterpreter{in: interpreted, delay: time.Second}, Interpretation{Filters: caller, Text: "q"}, false, true},
 	}
 
 	for _, tt := range tests {
@@ -99,13 +99,13 @@ func TestEngineSearchInterpreted(t *testing.T) {
 
 	emb, rr := &recordingEmbedder{}, &fakeReranker{scores: []float64{1}}
 	e := &Engine{Pool: pool, Embedder: emb, Reranker: rr,
-		Interpreter: fakeInterpreter{in: Interpretation{Filters: Filters{MinYear: 2020}, Description: "a blurb"}}}
+		Interpreter: fakeInterpreter{in: Interpretation{Filters: Filters{MinYear: 2020}, Text: "expat; amsterdam"}}}
 	res, in, err := e.SearchInterpreted(ctx, "I want a recent book", Filters{}, 10)
-	if err != nil || len(res) != 1 || res[0].ID != "OL2W" || in == nil || in.Filters.MinYear != 2020 || in.Description != "a blurb" {
+	if err != nil || len(res) != 1 || res[0].ID != "OL2W" || in == nil || in.Filters.MinYear != 2020 || in.Text != "expat; amsterdam" {
 		t.Fatalf("got %+v, %+v, %v", res, in, err)
 	}
 
-	if emb.text != "a blurb" || rr.query != "I want a recent book" {
+	if emb.text != "expat; amsterdam" || rr.query != "I want a recent book" {
 		t.Errorf("embedded %q, re-ranked with %q", emb.text, rr.query)
 	}
 

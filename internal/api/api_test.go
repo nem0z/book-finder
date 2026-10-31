@@ -78,12 +78,12 @@ func TestSearch(t *testing.T) {
 func TestSearchInterpretation(t *testing.T) {
 	s := &fakeSearcher{
 		results: []search.Result{{ID: "OL1W", Title: "Two Blankets, Three Sheets"}},
-		in:      &search.Interpretation{Description: "An expat settles in Amsterdam.", Filters: search.Filters{MinYear: 2020, MaxPages: 300}},
+		in:      &search.Interpretation{Text: "expat; amsterdam; netherlands", Filters: search.Filters{MinYear: 2020, MaxPages: 300}},
 	}
 	rec := httptest.NewRecorder()
 	NewHandler(s, slog.New(slog.NewTextHandler(io.Discard, nil))).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/search?q=amsterdam", nil))
 
-	want := `"interpretation":{"description":"An expat settles in Amsterdam.","filters":{"min_year":2020,"max_pages":300}}`
+	want := `"interpretation":{"keywords":"expat; amsterdam; netherlands","filters":{"min_year":2020,"max_pages":300}}`
 	if !strings.Contains(rec.Body.String(), want) {
 		t.Errorf("got %s, want %s", rec.Body.String(), want)
 	}

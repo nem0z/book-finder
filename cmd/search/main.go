@@ -109,7 +109,7 @@ func run(ctx context.Context, url string, e *search.Engine, query string, f sear
 
 // printInterpretation shows what the search embedded and the filters it applied.
 func printInterpretation(in search.Interpretation) {
-	fmt.Printf("Searched for: %s\n", in.Description)
+	fmt.Printf("Searched for: %s\n", in.Text)
 
 	var filters []string
 	f := in.Filters
