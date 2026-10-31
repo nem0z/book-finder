@@ -151,6 +151,9 @@ instructions less well and take 5 to 15 s on CPU.
 
 ## Benchmark
 
+The results so far, and the decisions they led to (keyword vectors, Voyage re-ranking, a pool of 50, what query
+understanding feeds retrieval and the re-ranker), are in [docs/benchmarks.md](docs/benchmarks.md).
+
 ```sh
 go run ./cmd/bench -o bench.md
 ```
