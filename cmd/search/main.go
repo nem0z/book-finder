@@ -86,8 +86,8 @@ func main() {
 		return
 	}
 
-	if e.Interpreter != nil {
-		printInterpretation(in)
+	if in != nil {
+		printInterpretation(*in)
 	}
 
 	print(results)
@@ -95,10 +95,10 @@ func main() {
 
 // run finds the books whose keyword vector is nearest to what e searches for, then re-orders the best of them
 // when e has a re-ranker.
-func run(ctx context.Context, url string, e *search.Engine, query string, f search.Filters, limit int) ([]search.Result, search.Interpretation, error) {
+func run(ctx context.Context, url string, e *search.Engine, query string, f search.Filters, limit int) ([]search.Result, *search.Interpretation, error) {
 	pool, err := db.Connect(ctx, url, nil)
 	if err != nil {
-		return nil, search.Interpretation{}, err
+		return nil, nil, err
 	}
 	defer pool.Close()
 
