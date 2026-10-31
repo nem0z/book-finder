@@ -56,6 +56,13 @@ services:
       # reranker service, like on Azure. VOYAGE_MODEL picks the model (default rerank-3).
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       VOYAGE_MODEL: ${VOYAGE_MODEL:-}
+      # With LLM_PROVIDER and LLM_MODEL (and LLM_URL, LLM_API_KEY) in .env, an LLM reads each query first
+      # (see README).
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      LLM_URL: ${LLM_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:

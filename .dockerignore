@@ -7,3 +7,4 @@ web
 *.txt.gz
 *.md
 .env
+cmd/*/zcopilot*
