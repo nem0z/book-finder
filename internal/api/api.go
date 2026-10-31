@@ -49,11 +49,11 @@ type searchResponse struct {
 	Results        []Book          `json:"results"`
 }
 
-// Interpretation is the description of the wanted book that the search used in place of the query, and
+// Interpretation is what the search embedded in place of the query, the keywords of the wanted book, and
 // the filters it applied.
 type Interpretation struct {
-	Description string  `json:"description"`
-	Filters     Filters `json:"filters"`
+	Keywords string  `json:"keywords"`
+	Filters  Filters `json:"filters"`
 }
 
 // Filters are the bounds a search applied; absent ones were not set.
@@ -147,7 +147,7 @@ func toInterpretation(in *search.Interpretation) *Interpretation {
 	f := in.Filters
 
 	return &Interpretation{
-		Description: in.Description,
+		Keywords: in.Text,
 		Filters: Filters{MinYear: f.MinYear, MaxYear: f.MaxYear, MinPages: f.MinPages, MaxPages: f.MaxPages,
 			OriginalLanguage: f.OriginalLanguage},
 	}

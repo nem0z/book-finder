@@ -123,10 +123,12 @@ VOYAGE_API_KEY=pa-...
 
 With an LLM configured, the search first has it read the query. It pulls out the publication years and page
 counts the query states ("set in modern Amsterdam (2020+)" means first published in 2020 or later; "under 200
-pages"), and rewrites the rest as a short book blurb without the conversational part ("I'm looking for a book
-that..."). The blurb is embedded in place of the query. The extracted filters apply unless the matching `-min-year`/
-`-max-year` or `-min-pages`/`-max-pages` flags are given, and the re-ranker still reads the original query.
-`cmd/search` prints what it searched for. If the LLM fails or takes longer than `-llm-timeout` (default 5s), the
+pages"), and rewrites the query as the keywords a matching book would have, in the shape of the books' own
+keywords: places with their synonyms, era, themes, tropes, mood, type of protagonist. Retrieval embeds those keywords
+in place of the query. The extracted filters apply unless the matching `-min-year`/`-max-year` or
+`-min-pages`/`-max-pages` flags are given, and the re-ranker still reads the original query. These choices come from
+the benchmark in [docs/benchmarks.md](docs/benchmarks.md#query-understanding-what-retrieval-and-the-re-ranker-read-2026-10-31).
+`cmd/search` prints what it searched for. If the LLM fails or takes longer than `-llm-timeout` (default 8s), the
 search goes on with the query as is. `-no-llm` turns it off.
 
 `LLM_PROVIDER` (`-llm`) picks the model's provider; `LLM_MODEL` (`-llm-model`) the model. In `.env` or the
@@ -143,7 +145,7 @@ a child process. The Docker image has it built in. For `go run`, build it into t
 `go tool bundler` in its directory (`cd cmd/search && go tool bundler`; the files are git-ignored), or point
 `COPILOT_CLI_PATH` to a `copilot-runtime` executable. The bundler also marks `github.com/klauspost/compress` as a
 direct dependency in `go.mod`, which its generated files import; leave that change out of commits
-(`git checkout go.mod`). With `claude-haiku-5.5`, reading a query takes 2 to 3 s.
+(`git checkout go.mod`). With `claude-haiku-5.5`, reading a query takes 3 to 6 s.
 
 For `ollama`, the official `ollama/ollama` image can serve a small chat model (`ollama pull qwen2.5:3b`); the
 `ollama` service of `docker-compose.yml` only has the embedding model. Small local models follow the
@@ -200,7 +202,7 @@ Or in Docker, with the other services: `docker compose up -d api` (rebuild after
 
 `GET /search?q=<description>` returns the 10 best matches (vector search, then re-ranking) as JSON: title,
 authors, year, pages, full description, tags, cover URL and Open Library link. When an LLM read the query (see
-[Query understanding](#query-understanding-optional)), `interpretation` gives the description it searched for and
+[Query understanding](#query-understanding-optional)), `interpretation` gives the keywords it searched for and
 the filters it applied (`min_year`, `max_year`, `min_pages`, `max_pages`); the web page shows them above the
 results. It is absent when the query was searched as typed. Flags: `-addr`
 (default `localhost:8080`), `-no-rerank`, and the same `-db`, `-ollama`, `-reranker`, `-voyage-model`, `-llm`,

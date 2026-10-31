@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/nem0z/book-finder/internal/enrich"
 	"github.com/nem0z/book-finder/internal/llm"
 	"github.com/nem0z/book-finder/internal/search"
 )
@@ -30,15 +32,15 @@ func (f *fakeLLM) JSON(_ context.Context, system, user, schemaName string, schem
 }
 
 func TestInterpret(t *testing.T) {
-	f := &fakeLLM{reply: `{"description":" An expat settles in Amsterdam. ","min_year":2020,"max_year":0,"min_pages":0,"max_pages":300}`}
+	f := &fakeLLM{reply: `{"keywords":["Expat"," amsterdam ","expat","dutch culture"],"setting_places":["Amsterdam, Netherlands"],"era_from":2020,"era_to":0,"era_label":"2020s","themes":["culture shock"],"protagonist":"expat","min_year":2020,"max_year":0,"min_pages":0,"max_pages":300}`}
 	in := New(f)
 	in.now = func() time.Time { return time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC) }
 
 	query := "a book about an expat in amsterdam (2020+), under 300 pages"
 	got, err := in.Interpret(context.Background(), query)
 	want := search.Interpretation{
-		Filters:     search.Filters{MinYear: 2020, MaxPages: 300},
-		Description: "An expat settles in Amsterdam.",
+		Filters: search.Filters{MinYear: 2020, MaxPages: 300},
+		Text:    "expat; amsterdam; dutch culture; Amsterdam, Netherlands; culture shock; 2020s; expat",
 	}
 	if err != nil || got != want {
 		t.Fatalf("got %+v, %v", got, err)
@@ -48,9 +50,9 @@ func TestInterpret(t *testing.T) {
 		t.Errorf("request: %q %q %s\n%s", f.user, f.name, f.schema, f.system)
 	}
 
-	f.reply = `{"description":"","min_year":0,"max_year":0,"min_pages":0,"max_pages":0}`
-	if got, err := in.Interpret(context.Background(), "a man wakes up as an insect"); err != nil || got.Description != "a man wakes up as an insect" {
-		t.Errorf("empty description: %+v, %v", got, err)
+	f.reply = `{"keywords":[" "],"setting_places":[],"era_from":0,"era_to":0,"era_label":"","themes":[],"protagonist":"","min_year":0,"max_year":0,"min_pages":0,"max_pages":0}`
+	if got, err := in.Interpret(context.Background(), "a man wakes up as an insect"); err != nil || got.Text != "a man wakes up as an insect" {
+		t.Errorf("no keywords: %+v, %v", got, err)
 	}
 
 	f.err = errors.New("down")
@@ -75,13 +77,13 @@ func TestInterpretation(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt.a.Description = "d"
-		if got := tt.a.interpretation("from 1960, 100 pages", 2026); got.Filters != tt.want || got.Description != "d" {
+		tt.a.Keywords.Keywords = []string{"d"}
+		if got := tt.a.interpretation("from 1960, 100 pages", 2026); got.Filters != tt.want || got.Text != "d" {
 			t.Errorf("%s: got %+v", tt.name, got)
 		}
 	}
 
-	all := queryAnswer{Description: "d", MinYear: 1960, MaxPages: 200}
+	all := queryAnswer{Keywords: enrich.Keywords{Keywords: []string{"d"}}, MinYear: 1960, MaxPages: 200}
 	for query, want := range map[string]search.Filters{
 		"set in Victorian London":                  {},
 		"a novel from the 1960s":                   {MinYear: 1960},
@@ -120,5 +122,30 @@ func TestFromConfig(t *testing.T) {
 
 	if err := (*Interpreter)(nil).Close(); err != nil {
 		t.Errorf("nil close: %v", err)
+	}
+}
+
+// The keyword fields must stay those of a book's keywords, so that both embed the same way.
+func TestSchemaHasBookKeywords(t *testing.T) {
+	var query, book struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
+	}
+	if err := json.Unmarshal(queryJSONSchema, &query); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := json.Unmarshal(enrich.Schema, &book); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, p := range book.Properties {
+		if string(query.Properties[name]) != string(p) || !slices.Contains(query.Required, name) {
+			t.Errorf("%s: %s, want %s", name, query.Properties[name], p)
+		}
+	}
+
+	if len(query.Required) != len(query.Properties) {
+		t.Errorf("required %v for %d properties", query.Required, len(query.Properties))
 	}
 }

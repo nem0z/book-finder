@@ -1,13 +1,13 @@
 import type { Filters, Interpretation } from "./api";
 
-// Shows what the search understood of the query: the description it searched for and the filters it applied.
+// Shows what the search understood of the query: the keywords it searched for and the filters it applied.
 export default function Understood({ interpretation }: { interpretation: Interpretation }) {
   const filters = filterLabels(interpretation.filters);
 
   return (
     <section className="understood" aria-label="How the search read your query">
       <p>
-        <span className="label">Searched for</span> {interpretation.description}
+        <span className="label">Searched for</span> {interpretation.keywords}
       </p>
       {filters.length > 0 && (
         <ul className="filters">

@@ -66,8 +66,8 @@ region keeps the GPU option open. Prices compared on 2026-10-19 (USD list prices
   subscription).
 - **Voyage AI:** billed per token: the query's tokens times the 50 candidates, plus the candidates' cards (about
   8,000 tokens per search). The first 200 million tokens are free, then `rerank-3` costs $0.05 per million tokens.
-- **GitHub Copilot:** billed per token to the GitHub account's AI credits. A query is read with about 560 input
-  and 70 to 150 output tokens with `claude-haiku-5.5`.
+- **GitHub Copilot:** billed per token to the GitHub account's AI credits. A query is read with about 700 input
+  and 150 to 250 output tokens (its keywords) with `claude-haiku-5.5`, in 3 to 6 s.
 - **Local re-ranker instead:** about $0.40 an hour on CPU (4 vCPUs and 8 GiB) or $0.55 on a T4, while it is up.
 
 To pause the database between uses (it restarts automatically after 7 days):

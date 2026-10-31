@@ -20,8 +20,8 @@ export type Filters = {
   original_language?: string;
 };
 
-// What an LLM understood of the query: the description searched for instead, and the filters applied.
-export type Interpretation = { description: string; filters: Filters };
+// What an LLM understood of the query: the keywords searched for instead, and the filters applied.
+export type Interpretation = { keywords: string; filters: Filters };
 
 export type SearchResult = { books: Book[]; interpretation?: Interpretation };
 

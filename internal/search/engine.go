@@ -9,9 +9,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// DefaultInterpretTimeout bounds the Interpreter call. A small hosted model answers in about a second; local
-// models on CPU need more (see Engine.InterpretTimeout).
-const DefaultInterpretTimeout = 5 * time.Second
+// DefaultInterpretTimeout bounds the Interpreter call. claude-haiku-5.5 through Copilot writes a query's keywords
+// in 3 to 6 s; local models on CPU need more (see Engine.InterpretTimeout).
+const DefaultInterpretTimeout = 8 * time.Second
 
 // Engine runs the full search: reading the query when an interpreter is set, the works whose keyword vector is
 // nearest to what it searches for, then re-ranking of the best candidates when a re-ranker is set.
@@ -21,7 +21,7 @@ type Engine struct {
 	Reranker Reranker // nil: keep the retrieval order
 	// Candidates is how many retrieved works are re-ranked; 0 means DefaultCandidates.
 	Candidates int
-	// Interpreter reads the query first: retrieval uses its description in place of the query, and its
+	// Interpreter reads the query first: retrieval embeds its text (the keywords of the wanted book) in place of the query, and its
 	// filters apply where the caller set none. The re-ranker still reads the original query. nil: the
 	// query is used as is.
 	Interpreter Interpreter
@@ -37,7 +37,7 @@ func (e *Engine) Search(ctx context.Context, query string, f Filters, limit int)
 	return results, err
 }
 
-// SearchInterpreted is Search, also returning what the Interpreter understood: the description that was
+// SearchInterpreted is Search, also returning what the Interpreter understood: the text that was
 // embedded and the filters the search applied, including the caller's. It is nil when the query was
 // searched as it is, without an Interpreter or because it failed.
 func (e *Engine) SearchInterpreted(ctx context.Context, query string, f Filters, limit int) ([]Result, *Interpretation, error) {
@@ -56,7 +56,7 @@ func (e *Engine) SearchInterpreted(ctx context.Context, query string, f Filters,
 	}
 
 	if e.Reranker == nil {
-		results, err := e.Retrieve(ctx, in.Description, in.Filters, limit)
+		results, err := e.Retrieve(ctx, in.Text, in.Filters, limit)
 		return results, understood, err
 	}
 
@@ -65,7 +65,7 @@ func (e *Engine) SearchInterpreted(ctx context.Context, query string, f Filters,
 		candidates = DefaultCandidates
 	}
 
-	results, err := e.Retrieve(ctx, in.Description, in.Filters, max(candidates, limit))
+	results, err := e.Retrieve(ctx, in.Text, in.Filters, max(candidates, limit))
 	if err != nil {
 		return nil, understood, err
 	}
@@ -81,9 +81,9 @@ func (e *Engine) Retrieve(ctx context.Context, query string, f Filters, n int) (
 }
 
 // interpret returns what to search for: the query and f as they are without an Interpreter or when it
-// fails (false), else its description and its filters merged into f (true).
+// fails (false), else its text and its filters merged into f (true).
 func (e *Engine) interpret(ctx context.Context, query string, f Filters) (Interpretation, bool) {
-	in := Interpretation{Filters: f, Description: query}
+	in := Interpretation{Filters: f, Text: query}
 	if e.Interpreter == nil {
 		return in, false
 	}
@@ -105,8 +105,8 @@ func (e *Engine) interpret(ctx context.Context, query string, f Filters) (Interp
 		return in, false
 	}
 
-	if d := strings.TrimSpace(got.Description); d != "" {
-		in.Description = d
+	if t := strings.TrimSpace(got.Text); t != "" {
+		in.Text = t
 	}
 
 	in.Filters = merge(f, got.Filters)
