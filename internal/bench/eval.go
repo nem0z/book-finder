@@ -30,6 +30,8 @@ type Eval struct {
 	Retrieval []time.Duration   // [query]
 	Rerank    []time.Duration   // [query]
 	Judgments []map[string]Judgment
+	// RerankQueries, when set, is the text the re-ranker reads for each query instead of the query itself.
+	RerankQueries []string
 	// Note, when set, is written above the report: what was searched and rated, how.
 	Note string
 }
@@ -98,8 +100,13 @@ func (ev *Eval) RerankPool(ctx context.Context, rr search.Reranker) error {
 	for qi, q := range ev.Queries {
 		list := ev.Retrieved[qi]
 		n := min(ev.Pool, len(list))
+		text := q.Query
+		if ev.RerankQueries != nil {
+			text = ev.RerankQueries[qi]
+		}
+
 		start, spent := time.Now(), spentBy(rr)
-		top, err := search.Rerank(ctx, rr, q.Query, list[:n], n)
+		top, err := search.Rerank(ctx, rr, text, list[:n], n)
 		if err != nil {
 			return fmt.Errorf("%q: %w", q.Query, err)
 		}

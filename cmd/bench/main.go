@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,6 +25,14 @@ import (
 	"github.com/nem0z/book-finder/internal/llm"
 	"github.com/nem0z/book-finder/internal/rerank"
 	"github.com/nem0z/book-finder/internal/search"
+)
+
+// What retrieval searches for and the re-ranker reads (-query-text, -rerank-query).
+const (
+	queryRaw       = "raw"
+	querySentence  = "sentence"
+	queryKeywords  = "keywords"
+	rerankOriginal = "original"
 )
 
 type config struct {
@@ -38,6 +47,8 @@ type config struct {
 	cache              string
 	dryRun             bool
 	workers, perMinute int
+
+	queryText, rerankQuery, rewriteCache, results string
 }
 
 // reranked is the outcome of re-ranking every pool.
@@ -66,7 +77,16 @@ func main() {
 	flag.BoolVar(&c.dryRun, "dry-run", false, "only count the ratings not cached yet")
 	flag.IntVar(&c.workers, "concurrency", 4, "ratings asked at once")
 	flag.IntVar(&c.perMinute, "per-minute", 60, "at most this many ratings per minute (0: no cap)")
+	flag.StringVar(&c.queryText, "query-text", queryRaw, "what retrieval searches for: raw (the query), sentence (the LLM's description of the wanted book, as the search does) or keywords (the LLM's keywords for it); sentence and keywords apply the LLM's filters")
+	flag.StringVar(&c.rerankQuery, "rerank-query", rerankOriginal, "what the re-ranker reads: original (the query, as the search does) or sentence (the LLM's description)")
+	flag.StringVar(&c.rewriteCache, "rewrite-cache", "bench-rewrites.jsonl", "file the LLM's rewrites of the queries are cached in")
+	flag.StringVar(&c.results, "results", "", "also write every query's pool and top 10 with their ratings to this JSON file")
 	flag.Parse()
+
+	if !slices.Contains([]string{queryRaw, querySentence, queryKeywords}, c.queryText) || !slices.Contains([]string{rerankOriginal, querySentence}, c.rerankQuery) {
+		fmt.Fprintln(os.Stderr, "-query-text must be raw, sentence or keywords; -rerank-query original or sentence")
+		os.Exit(2)
+	}
 
 	if !*noRerank {
 		c.rr, c.rrName = rerank.New(rerank.Config{TEIURL: *reranker, VoyageAPIKey: os.Getenv("VOYAGE_API_KEY"), VoyageModel: *voyageModel})
@@ -100,21 +120,40 @@ func run(ctx context.Context, c config) error {
 		return err
 	}
 
-	lc, judge, closeJudge, err := openJudge(c)
+	lc, client, judge, closeJudge, err := openJudge(c)
 	if err != nil {
 		return err
 	}
 	defer closeJudge()
 
+	rewrites, err := rewrite(ctx, c, client, lc.Model, queries)
+	if err != nil {
+		return err
+	}
+
 	start := time.Now()
 	e := &search.Engine{Pool: pool, Embedder: embed.NewOllama(c.ollama, embed.DefaultModel)}
 	retrieve := func(ctx context.Context, query string, n int) ([]search.Result, error) {
-		return e.Retrieve(ctx, query, search.Filters{}, n)
+		rw := rewrites[query]
+		switch c.queryText {
+		case querySentence:
+			return e.Retrieve(ctx, rw.Description, rw.Filters, n)
+		case queryKeywords:
+			return e.Retrieve(ctx, rw.Keywords, rw.Filters, n)
+		default:
+			return e.Retrieve(ctx, query, search.Filters{}, n)
+		}
 	}
 
 	ev, err := bench.Retrieve(ctx, retrieve, queries, c.candidates, max(c.depth, c.candidates))
 	if err != nil {
 		return err
+	}
+
+	if c.rerankQuery == querySentence {
+		for _, q := range queries {
+			ev.RerankQueries = append(ev.RerankQueries, rewrites[q.Query].Description)
+		}
 	}
 
 	if c.dryRun {
@@ -135,7 +174,7 @@ func run(ctx context.Context, c config) error {
 		defer rr.Close()
 
 		// A copy, so that the report written meanwhile doesn't read what re-ranking writes.
-		r := &bench.Eval{Queries: ev.Queries, Pool: ev.Pool, Retrieved: ev.Retrieved}
+		r := &bench.Eval{Queries: ev.Queries, Pool: ev.Pool, Retrieved: ev.Retrieved, RerankQueries: ev.RerankQueries}
 		go func() {
 			err := r.RerankPool(ctx, rr)
 			done <- reranked{r.Final, r.Rerank, err}
@@ -159,7 +198,7 @@ func run(ctx context.Context, c config) error {
 		ev.Note += " Re-ranking is still running: the top 10 is in retrieval order."
 	}
 
-	if err := write(c.out, ev.WriteMarkdown); err != nil {
+	if err := report(c, ev); err != nil {
 		return err
 	}
 
@@ -177,17 +216,55 @@ func run(ctx context.Context, c config) error {
 	ev.Final, ev.Rerank, ev.Note = res.final, res.took, note
 	slog.Info("bench finished", "took", time.Since(start).Round(time.Second))
 
-	return write(c.out, ev.WriteMarkdown)
+	return report(c, ev)
 }
 
-// openJudge returns the LLM settings, a judge asking that LLM with c's settings, and a function that closes
-// both.
-func openJudge(c config) (llm.Config, *bench.Judge, func(), error) {
+// rewrite returns the LLM's rewrite of every query, by query, when c searches or re-ranks with one.
+func rewrite(ctx context.Context, c config, client llm.Client, model string, queries []bench.Query) (map[string]bench.Rewrite, error) {
+	out := map[string]bench.Rewrite{}
+	if c.queryText == queryRaw && c.rerankQuery == rerankOriginal {
+		return out, nil
+	}
+
+	r, err := bench.OpenRewriter(client, model, c.rewriteCache)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	for _, q := range queries {
+		rw, err := r.Get(ctx, q.Query)
+		if err != nil {
+			return nil, fmt.Errorf("%q: %w", q.Query, err)
+		}
+
+		out[q.Query] = rw
+	}
+
+	return out, nil
+}
+
+// report writes the Markdown report, and the results file when c asks for one.
+func report(c config, ev *bench.Eval) error {
+	if err := write(c.out, ev.WriteMarkdown); err != nil {
+		return err
+	}
+
+	if c.results == "" {
+		return nil
+	}
+
+	return write(c.results, ev.WriteJSON)
+}
+
+// openJudge returns the LLM settings, its client, a judge asking it with c's settings, and a function that
+// closes both.
+func openJudge(c config) (llm.Config, llm.Client, *bench.Judge, func(), error) {
 	lc := llm.Config{Provider: envOr("LLM_PROVIDER", llm.ProviderAzure), URL: os.Getenv("LLM_URL"),
 		Model: os.Getenv("LLM_MODEL"), APIKey: os.Getenv("LLM_API_KEY")}
 	client, err := llm.New(lc)
 	if err != nil {
-		return lc, nil, nil, err
+		return lc, nil, nil, nil, err
 	}
 
 	// The Copilot client runs a child process.
@@ -199,12 +276,12 @@ func openJudge(c config) (llm.Config, *bench.Judge, func(), error) {
 	judge, err := bench.OpenJudge(client, lc.Model, c.cache)
 	if err != nil {
 		closeClient()
-		return lc, nil, nil, err
+		return lc, nil, nil, nil, err
 	}
 
 	judge.Workers, judge.PerMinute, judge.DryRun = c.workers, c.perMinute, c.dryRun
 
-	return lc, judge, func() { judge.Close(); closeClient() }, nil
+	return lc, client, judge, func() { judge.Close(); closeClient() }, nil
 }
 
 // describe says what was searched and how.
@@ -216,11 +293,11 @@ func describe(ctx context.Context, pool *pgxpool.Pool, c config) (string, error)
 
 	rr := "not re-ranked"
 	if c.rr != nil {
-		rr = "re-ranked by " + c.rrName
+		rr = fmt.Sprintf("re-ranked by %s, reading the %s query", c.rrName, c.rerankQuery)
 	}
 
-	return fmt.Sprintf("Keyword vectors of %d works; the top %d %s; the top %d rated.", keywordVectors, c.candidates, rr,
-		max(c.depth, c.candidates)), nil
+	return fmt.Sprintf("Keyword vectors of %d works searched with the %s query; the top %d %s; the top %d rated.",
+		keywordVectors, c.queryText, c.candidates, rr, max(c.depth, c.candidates)), nil
 }
 
 // write writes a report to the file at path, or to stdout when path is empty.

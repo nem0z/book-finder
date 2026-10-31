@@ -185,6 +185,14 @@ The re-ranker's scores are cached in `bench-rerank-scores.jsonl` (`-rerank-cache
 calls with `-rerank-chunk 20 -rerank-per-minute 3 -rerank-tokens-per-minute 8000`; the waits don't count in the
 re-rank times. The report is written once the ratings are in, in retrieval order, then again after re-ranking.
 
+To compare query rewrites, `-query-text` picks what retrieval searches for: `raw` (the query, the default),
+`sentence` (the description the search's LLM step writes, see [Query understanding](#query-understanding-optional))
+or `keywords` (the LLM's keywords for the wanted book, in the shape of a book's, `enrich.QueryPrompt`); the last two
+apply the filters the LLM step extracts. `-rerank-query sentence` has the re-ranker read the description instead of
+the query. Works are always rated against the query. The LLM's rewrites are cached in `bench-rewrites.jsonl`
+(`-rewrite-cache`), so every run compares the same ones, and `-results` also writes every query's pool and top 10
+with their ratings as JSON, for comparing runs.
+
 ## API
 
 ```sh
