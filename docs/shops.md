@@ -8,8 +8,10 @@ Open Library are not merged. `internal/shops` reads the shop; a later loader wri
 
 Chapters runs on Shopify (`chapters-ie.myshopify.com`, about 281,000 products). `/products.json` stops at
 25,000 products, so the shop is read through the tokenless Storefront GraphQL API instead:
-`POST https://chaptersbookstore.com/api/2026-07/graphql.json`, `products(first: 250, after: $cursor)`, about
-1,130 requests for the whole catalogue.
+`POST https://chaptersbookstore.com/api/2026-07/graphql.json`, `products(first: 250, sortKey: ID, query: "id:>N")`
+with N the numeric ID of the previous page's last product, about 1,130 requests for the whole catalogue. The API's
+cursor paging (`after: $cursor`) also stops at 25,000 products; paging on the ID makes each request a fresh
+query, so the limit does not apply. The walk fails if the last ID does not parse or does not increase.
 
 The shop rate-limits: it answered 429 after about 15 quick requests and recovered within 90 s. The client
 identifies itself (`User-Agent: book-finder/1.0 (+https://github.com/nem0z/book-finder)`), starts a request at most

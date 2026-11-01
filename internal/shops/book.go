@@ -48,6 +48,7 @@ type Book struct {
 
 // product is a product node of the Storefront API, as queried by productsQuery.
 type product struct {
+	ID              string `json:"id"`
 	Handle          string `json:"handle"`
 	Title           string `json:"title"`
 	Vendor          string `json:"vendor"`

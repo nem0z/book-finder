@@ -27,11 +27,12 @@ const (
 	pageSize     = 250
 	maxErrorBody = 1024
 
-	productsQuery = `query($first: Int!, $cursor: String) {
-  products(first: $first, after: $cursor) {
-    pageInfo { hasNextPage endCursor }
+	// productsQuery pages on the product ID ("id:>N") rather than with cursors, which stop at 25,000 products.
+	productsQuery = `query($first: Int!, $query: String) {
+  products(first: $first, sortKey: ID, query: $query) {
+    pageInfo { hasNextPage }
     nodes {
-      handle title vendor productType descriptionHtml onlineStoreUrl
+      id handle title vendor productType descriptionHtml onlineStoreUrl
       featuredImage { url }
       variants(first: 4) { nodes { sku } }
     }
@@ -79,8 +80,7 @@ type graphQLResponse struct {
 	Data *struct {
 		Products struct {
 			PageInfo struct {
-				HasNextPage bool   `json:"hasNextPage"`
-				EndCursor   string `json:"endCursor"`
+				HasNextPage bool `json:"hasNextPage"`
 			} `json:"pageInfo"`
 			Nodes []product `json:"nodes"`
 		} `json:"products"`
@@ -122,15 +122,15 @@ func NewClient(source, baseURL string) *Client {
 func (e *retryError) Error() string { return e.err.Error() }
 func (e *retryError) Unwrap() error { return e.err }
 
-// Walk pages through every product of the store, in order, and hands each page's books to fn with the counts
-// so far. It stops at the first error of fn or of a request that cannot be retried. Products that are not
-// books, have no title or repeat an ISBN-13 are skipped and counted.
+// Walk pages through every product of the store, by increasing ID, and hands each page's books to fn with the
+// counts so far. It stops at the first error of fn or of a request that cannot be retried. Products that are
+// not books, have no title or repeat an ISBN-13 are skipped and counted.
 func (c *Client) Walk(ctx context.Context, fn func(books []Book, s Stats) error) (Stats, error) {
 	var s Stats
 	seen := make(map[string]bool)
-	cursor := ""
+	var after uint64
 	for {
-		resp, err := c.fetch(ctx, cursor, &s)
+		resp, err := c.fetch(ctx, after, &s)
 		if err != nil {
 			return s, err
 		}
@@ -158,23 +158,39 @@ func (c *Client) Walk(ctx context.Context, fn func(books []Book, s Stats) error)
 			return s, err
 		}
 
-		if !page.PageInfo.HasNextPage {
+		if !page.PageInfo.HasNextPage || len(page.Nodes) == 0 {
 			return s, nil
 		}
 
-		if page.PageInfo.EndCursor == "" {
-			return s, errors.New("shopify: next page without a cursor")
+		last, err := productID(page.Nodes[len(page.Nodes)-1].ID)
+		if err != nil {
+			return s, err
 		}
 
-		cursor = page.PageInfo.EndCursor
+		if last <= after {
+			return s, fmt.Errorf("shopify: product IDs do not increase: %d after %d", last, after)
+		}
+
+		after = last
 	}
 }
 
-// fetch gets the page of products after cursor, trying again on rate limits and transient failures.
-func (c *Client) fetch(ctx context.Context, cursor string, s *Stats) (*graphQLResponse, error) {
-	vars := map[string]any{"first": pageSize, "cursor": nil}
-	if cursor != "" {
-		vars["cursor"] = cursor
+// productID returns the number of a product's ID ("gid://shopify/Product/7248452387001").
+func productID(gid string) (uint64, error) {
+	n, err := strconv.ParseUint(gid[strings.LastIndex(gid, "/")+1:], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("shopify: bad product ID %q", gid)
+	}
+
+	return n, nil
+}
+
+// fetch gets the page of products whose ID is above after (0: the first page), trying again on rate limits
+// and transient failures.
+func (c *Client) fetch(ctx context.Context, after uint64, s *Stats) (*graphQLResponse, error) {
+	vars := map[string]any{"first": pageSize, "query": nil}
+	if after > 0 {
+		vars["query"] = fmt.Sprintf("id:>%d", after)
 	}
 
 	body, err := json.Marshal(graphQLRequest{Query: productsQuery, Variables: vars})

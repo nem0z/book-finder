@@ -18,7 +18,7 @@ type scripted struct {
 	t         *testing.T
 	mu        sync.Mutex
 	responses []func(w http.ResponseWriter)
-	cursors   []any
+	queries   []any
 }
 
 func (s *scripted) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +35,7 @@ func (s *scripted) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.t.Errorf("body: %+v, %v", req, err)
 	}
 
-	s.cursors = append(s.cursors, req.Variables["cursor"])
+	s.queries = append(s.queries, req.Variables["query"])
 	if len(s.responses) == 0 {
 		s.t.Error("unexpected request")
 		w.WriteHeader(http.StatusBadRequest)
@@ -48,16 +48,16 @@ func (s *scripted) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	next(w)
 }
 
-func page(next string, titles ...string) func(w http.ResponseWriter) {
+// page serves products with IDs from firstID up, made of "sku|title" pairs.
+func page(firstID int, hasNext bool, titles ...string) func(w http.ResponseWriter) {
 	nodes := make([]string, len(titles))
 	for i, t := range titles {
 		sku, title, _ := strings.Cut(t, "|")
-		nodes[i] = fmt.Sprintf(`{"handle":"h%d","title":%q,"vendor":"Owens, Delia","productType":"FICTION","descriptionHtml":"<p>x</p>","featuredImage":{"url":"https://cdn/c.jpg"},"variants":{"nodes":[{"sku":%q}]}}`, i, title, sku)
+		nodes[i] = fmt.Sprintf(`{"id":"gid://shopify/Product/%d","handle":"h%d","title":%q,"vendor":"Owens, Delia","productType":"FICTION","descriptionHtml":"<p>x</p>","featuredImage":{"url":"https://cdn/c.jpg"},"variants":{"nodes":[{"sku":%q}]}}`, firstID+i, i, title, sku)
 	}
 
 	return func(w http.ResponseWriter) {
-		fmt.Fprintf(w, `{"data":{"products":{"pageInfo":{"hasNextPage":%t,"endCursor":%q},"nodes":[%s]}}}`,
-			next != "", next, strings.Join(nodes, ","))
+		fmt.Fprintf(w, `{"data":{"products":{"pageInfo":{"hasNextPage":%t},"nodes":[%s]}}}`, hasNext, strings.Join(nodes, ","))
 	}
 }
 
@@ -97,8 +97,8 @@ func testClient(t *testing.T, responses ...func(w http.ResponseWriter)) (*Client
 
 func TestWalkPages(t *testing.T) {
 	c, s, waits := testClient(t,
-		page("c1", "9781472277299|Where the Crawdads Sing: Delia Owens [2019] paperback", "4260110581646|Some DVD"),
-		page("", "9780008742775|9780008742775 [2024]", "XG81472277299|Again", "9780008742775|Verity [2018]"),
+		page(7248452387001, true, "9781472277299|Where the Crawdads Sing: Delia Owens [2019] paperback", "4260110581646|Some DVD"),
+		page(7248452387005, false, "9780008742775|9780008742775 [2024]", "XG81472277299|Again", "9780008742775|Verity [2018]"),
 	)
 	c.Pace = time.Hour
 
@@ -120,23 +120,53 @@ func TestWalkPages(t *testing.T) {
 		t.Errorf("got %q, %+v, %v", got, stats, err)
 	}
 
-	if fmt.Sprint(s.cursorList()) != "[<nil> c1]" || len(*waits) != 1 || (*waits)[0] < 59*time.Minute {
-		t.Errorf("cursors %v, waits %v", s.cursorList(), *waits)
+	if fmt.Sprint(s.queryList()) != "[<nil> id:>7248452387002]" || len(*waits) != 1 || (*waits)[0] < 59*time.Minute {
+		t.Errorf("queries %v, waits %v", s.queryList(), *waits)
 	}
 }
 
-func (s *scripted) cursorList() []any {
+// TestWalkEnds checks that paging stops on an empty page, and fails on IDs that cannot drive the next query.
+func TestWalkEnds(t *testing.T) {
+	ids := func(ids ...string) func(w http.ResponseWriter) {
+		return func(w http.ResponseWriter) {
+			nodes := make([]string, len(ids))
+			for i, id := range ids {
+				nodes[i] = fmt.Sprintf(`{"id":%q,"variants":{"nodes":[]}}`, id)
+			}
+
+			fmt.Fprintf(w, `{"data":{"products":{"pageInfo":{"hasNextPage":true},"nodes":[%s]}}}`, strings.Join(nodes, ","))
+		}
+	}
+
+	for name, tc := range map[string]struct {
+		responses []func(w http.ResponseWriter)
+		err       string
+	}{
+		"empty page":       {[]func(w http.ResponseWriter){ids("gid://shopify/Product/5"), ids()}, ""},
+		"bad ID":           {[]func(w http.ResponseWriter){ids("gid://shopify/Product/x")}, "bad product ID"},
+		"no ID":            {[]func(w http.ResponseWriter){ids("")}, "bad product ID"},
+		"ID not increased": {[]func(w http.ResponseWriter){ids("gid://shopify/Product/5"), ids("gid://shopify/Product/5")}, "do not increase"},
+	} {
+		c, s, _ := testClient(t, tc.responses...)
+		_, err := c.Walk(context.Background(), func([]Book, Stats) error { return nil })
+		if (tc.err == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tc.err)) || len(s.queryList()) != len(tc.responses) {
+			t.Errorf("%s: got %v, queries %v", name, err, s.queryList())
+		}
+	}
+}
+
+func (s *scripted) queryList() []any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.cursors
+	return s.queries
 }
 
 func TestWalkRetries(t *testing.T) {
 	c, _, waits := testClient(t,
 		status(http.StatusTooManyRequests, "90"),
 		status(http.StatusServiceUnavailable, ""),
-		page(""),
+		page(1, false),
 	)
 	c.MaxBackoff = time.Hour
 
@@ -151,7 +181,7 @@ func TestWalkTruncatedBody(t *testing.T) {
 		w.Header().Set("Content-Length", "100000")
 		fmt.Fprint(w, `{"data":{"products":{"pageInfo":`)
 	}
-	c, _, waits := testClient(t, truncated, page("", "9781472277299|Persians [2022]"))
+	c, _, waits := testClient(t, truncated, page(1, false, "9781472277299|Persians [2022]"))
 
 	stats, err := c.Walk(context.Background(), func([]Book, Stats) error { return nil })
 	if err != nil || stats.Requests != 2 || stats.Retries != 1 || stats.Books != 1 || fmt.Sprint(*waits) != "[1s]" {
@@ -160,7 +190,7 @@ func TestWalkTruncatedBody(t *testing.T) {
 }
 
 func TestWalkThrottled(t *testing.T) {
-	c, _, waits := testClient(t, graphQLError("THROTTLED"), graphQLError("THROTTLED"), page(""))
+	c, _, waits := testClient(t, graphQLError("THROTTLED"), graphQLError("THROTTLED"), page(1, false))
 
 	stats, err := c.Walk(context.Background(), func([]Book, Stats) error { return nil })
 	if err != nil || stats.Retries != 2 || fmt.Sprint(*waits) != "[1s 2s]" {
@@ -193,7 +223,7 @@ func TestWalkFatal(t *testing.T) {
 }
 
 func TestWalkStopsOnCallbackError(t *testing.T) {
-	c, _, _ := testClient(t, page("c1"))
+	c, _, _ := testClient(t, page(1, true, "9781472277299|Persians [2022]"))
 	stop := errors.New("stop")
 
 	if _, err := c.Walk(context.Background(), func([]Book, Stats) error { return stop }); !errors.Is(err, stop) {
