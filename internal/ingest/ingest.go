@@ -18,8 +18,10 @@ import (
 const (
 	defaultProgressInterval = 15 * time.Second
 
+	// Bookshop works (cmd/shops) have no work_authors or authors rows and are kept.
 	prepareSQL = `
-TRUNCATE works, work_authors, authors;
+TRUNCATE work_authors, authors;
+DELETE FROM works WHERE source = 'openlibrary';
 DROP TABLE IF EXISTS stage_works, stage_work_stats;
 CREATE UNLOGGED TABLE stage_works (
     id text, title text, subtitle text, description text, first_publish_year smallint,
@@ -97,7 +99,8 @@ func newLoader(pool *pgxpool.Pool, opts Options) *loader {
 	}
 }
 
-// Run rebuilds the catalogue from the dumps. The schema must already be migrated.
+// Run rebuilds the Open Library works from the dumps; bookshop works are kept. The schema must already be
+// migrated.
 func Run(ctx context.Context, pool *pgxpool.Pool, opts Options) (Stats, error) {
 	src := opts.Sources
 	if src.Works == "" || src.Editions == "" || src.Authors == "" {
@@ -149,7 +152,8 @@ func (l *loader) progress(step string) func(oldump.Progress) {
 	}
 }
 
-// prepare drops secondary indexes (rebuilt in finalize), empties the catalogue and resets staging tables.
+// prepare drops secondary indexes (rebuilt in finalize), empties the Open Library part of the catalogue and
+// resets staging tables.
 func (l *loader) prepare(ctx context.Context) error {
 	var b strings.Builder
 	for _, name := range db.IndexNames() {
