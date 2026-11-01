@@ -128,3 +128,34 @@ func TestKeywordVectors(t *testing.T) {
 		t.Errorf("retrieved: %+v, %v", res, err)
 	}
 }
+
+func TestKeywordVectorsInShop(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO works (id, title, description) VALUES ('OL1W', 'Open Library', 'd');
+		INSERT INTO works (id, title, description, source, source_url, cover_url) VALUES
+		('chapters:9780000000001', 'Bookshop', 'd', 'chapters', 'https://shop/p/1', 'https://cdn/1.jpg')`); err != nil {
+		t.Fatal(err)
+	}
+
+	for id, v := range map[string][]float32{"OL1W": axis(1, 1), "chapters:9780000000001": axis(1, 0.5)} {
+		if _, err := pool.Exec(ctx, "INSERT INTO work_keyword_embeddings (work_id, model, content_hash, embedding) VALUES ($1, 'fake', 'h', $2::halfvec)",
+			id, embed.VectorLiteral(v)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	all, err := KeywordVectors(ctx, pool, fakeQuery{"fake"}, "a query", Filters{}, 0)
+	if err != nil || len(all) != 2 || all[0].Source != "openlibrary" || all[0].SourceURL != "" {
+		t.Errorf("all: %+v, %v", all, err)
+	}
+
+	shop, err := KeywordVectors(ctx, pool, fakeQuery{"fake"}, "a query", Filters{InShop: true}, 0)
+	if err != nil || len(shop) != 1 {
+		t.Fatalf("in shop: %+v, %v", shop, err)
+	}
+
+	if r := shop[0]; r.Source != "chapters" || r.SourceURL != "https://shop/p/1" || r.CoverURL != "https://cdn/1.jpg" {
+		t.Errorf("bookshop result: %+v", r)
+	}
+}

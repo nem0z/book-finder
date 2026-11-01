@@ -28,6 +28,15 @@ description with `description_source = 'edition'`. Its `first_publish_year` is t
 original language, page count, subjects or ratings: filters on language or length exclude it, and `cmd/index`
 reaches it last (most-rated first).
 
+## Searching
+
+Once `cmd/index` gave them keyword vectors, shop rows are searched like Open Library works, so a book in both
+can appear twice. "In a Dublin bookshop" on the web page (`shop=1` on `GET /search`, `-shop` for `cmd/search`)
+keeps only shop rows (`source <> 'openlibrary'`), filtered while walking the HNSW index like the other filters.
+A shop result links to its product page and shows the shop's cover. Year filters use the edition year, and page
+or language filters (typed, or read from the query by the LLM) exclude shop rows, so with the toggle on they
+return nothing.
+
 ## Source
 
 Chapters runs on Shopify (`chapters-ie.myshopify.com`, about 281,000 products). `/products.json` stops at

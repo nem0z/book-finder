@@ -9,7 +9,8 @@ export type Book = {
   description: string;
   tags: string[];
   cover_url?: string;
-  url: string;
+  url: string; // the bookshop's product page, else the Open Library page
+  source: string; // "openlibrary" or a bookshop ("chapters")
 };
 
 export type Filters = {
@@ -18,6 +19,7 @@ export type Filters = {
   min_pages?: number;
   max_pages?: number;
   original_language?: string;
+  in_shop?: boolean;
 };
 
 // What an LLM understood of the query: the keywords searched for instead, and the filters applied.
@@ -28,8 +30,9 @@ export type SearchResult = { books: Book[]; interpretation?: Interpretation };
 type SearchResponse = { query: string; interpretation?: Interpretation; results: Book[] };
 type ErrorResponse = { error: string };
 
-export async function searchBooks(query: string, signal?: AbortSignal): Promise<SearchResult> {
-  const res = await fetch(`/search?q=${encodeURIComponent(query)}`, { signal });
+// searchBooks searches the whole catalogue, or only the books a Dublin bookshop lists when inShop is set.
+export async function searchBooks(query: string, inShop: boolean, signal?: AbortSignal): Promise<SearchResult> {
+  const res = await fetch(`/search?q=${encodeURIComponent(query)}${inShop ? "&shop=1" : ""}`, { signal });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as ErrorResponse | null;
     throw new Error(body?.error ?? `search failed (${res.status})`);
