@@ -18,7 +18,7 @@ English and 67% when it is in another language (about 1% of works).
 
 | Table | One row per | Main columns |
 |---|---|---|
-| `works` | book (all editions together) | title, description, first publish year, original language, page count, ISBN-13, subjects, genres, author names, ratings and reading-log counts, `search_tsv` |
+| `works` | book (all editions together) | source, title, description, first publish year, original language, page count, ISBN-13, subjects, genres, author names, ratings and reading-log counts, `search_tsv` |
 | `authors` | author of a kept work | name, birth/death date, Wikidata ID |
 | `work_authors` | work–author link | position (author order) |
 | `ingest_runs` | load run | source files, counts |
@@ -31,6 +31,13 @@ Keys are Open Library IDs without the path prefix (`OL45804W`, `OL23919A`), so a
 Editions are not stored. When a work has no description, it takes the longest description among its English editions.
 For page count, ISBN-13 and cover, the most complete English edition fills in what the work lacks: it prefers an edition
 with a page count, then an ISBN-13, then a cover; ties go to the most recent edition.
+
+## Bookshop works
+
+`works.source` says where a row comes from: `openlibrary` (the default) or a bookshop (`chapters`). A bookshop row is
+one book the shop lists, keyed `<source>:<isbn13>`, with the shop's product page in `source_url` and its cover in
+`cover_url`; it has no `work_authors` or `authors` rows (`author_names` only). A book can be in both, as two rows.
+`cmd/ingest` deletes and rebuilds only the `openlibrary` rows, so bookshop rows survive catalogue reloads.
 
 ## Indexes
 

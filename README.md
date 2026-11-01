@@ -53,8 +53,9 @@ go run ./cmd/ingest \
   -ratings data/ol_dump_ratings_2026-09-30.txt.gz
 ```
 
-It applies the migrations, then rebuilds the catalogue from scratch: the existing `works`, `authors` and
-`work_authors` rows are replaced. See [docs/schema.md](docs/schema.md) for what is kept.
+It applies the migrations, then rebuilds the Open Library catalogue from scratch: the existing Open Library `works`,
+and all `authors` and `work_authors` rows, are replaced. Bookshop works (`source` other than `openlibrary`) are kept.
+See [docs/schema.md](docs/schema.md) for what is kept.
 
 ## Index the catalogue
 

@@ -18,8 +18,24 @@ func TestPrepare(t *testing.T) {
 	ctx := context.Background()
 	l := newLoader(pool, Options{Sources: Sources{Redirects: redirectsFixture(t, t.TempDir())}, ProgressInterval: -1})
 
+	if _, err := pool.Exec(ctx, `TRUNCATE works, work_authors, authors;
+		INSERT INTO works (id, title) VALUES ('OL1W', 'Open Library');
+		INSERT INTO works (id, title, source) VALUES ('chapters:9780000000001', 'Bookshop', 'chapters')`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool.Exec(context.Background(), "TRUNCATE works, work_authors;"+db.IndexesSQL()) }) //nolint:errcheck // best effort
+
 	if err := l.prepare(ctx); err != nil {
 		t.Fatal(err)
+	}
+
+	var ids []string
+	if err := pool.QueryRow(ctx, "SELECT coalesce(array_agg(id), '{}') FROM works").Scan(&ids); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(ids) != 1 || ids[0] != "chapters:9780000000001" {
+		t.Errorf("only bookshop works should survive, got %v", ids)
 	}
 
 	var indexes int
