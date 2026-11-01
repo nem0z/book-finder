@@ -37,7 +37,8 @@ with a page count, then an ISBN-13, then a cover; ties go to the most recent edi
 `works.source` says where a row comes from: `openlibrary` (the default) or a bookshop (`chapters`). A bookshop row is
 one book the shop lists, keyed `<source>:<isbn13>`, with the shop's product page in `source_url` and its cover in
 `cover_url`; it has no `work_authors` or `authors` rows (`author_names` only). A book can be in both, as two rows.
-`cmd/ingest` deletes and rebuilds only the `openlibrary` rows, so bookshop rows survive catalogue reloads.
+`cmd/ingest` deletes and rebuilds only the `openlibrary` rows, so bookshop rows survive catalogue reloads; `cmd/shops`
+replaces only its shop's rows (see [shops.md](shops.md)).
 
 ## Indexes
 
