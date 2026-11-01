@@ -1,5 +1,5 @@
 // Package shops reads the catalogue of a bookshop's Shopify store through the tokenless Storefront GraphQL
-// API and turns its products into books. See docs/shops.md.
+// API, turns its products into books and stages them to replace the shop's works. See docs/shops.md.
 package shops
 
 import (

@@ -2,7 +2,31 @@
 
 Besides Open Library, the catalogue holds every book listed by [Chapters Bookstore](https://chaptersbookstore.com)
 (Dublin), one `works` row per book with `source = 'chapters'` and id `chapters:<isbn13>`. Books that are also in
-Open Library are not merged. `internal/shops` reads the shop; a later loader writes the rows.
+Open Library are not merged. `internal/shops` reads the shop and `cmd/shops` writes the rows.
+
+## Refreshing
+
+Run by hand, locally, in this order:
+
+```sh
+go run ./cmd/shops -max-pages 1   # optional trial: reads 1 page (250 products), changes nothing
+go run ./cmd/shops                # about 45 minutes
+LLM_PROVIDER=copilot LLM_MODEL=claude-haiku-5.5 go run ./cmd/index -dry-run   # how many works to extract
+LLM_PROVIDER=copilot LLM_MODEL=claude-haiku-5.5 go run ./cmd/index
+./deploy/azure/restore-db.ps1     # only to publish the database (see docs/azure.md)
+```
+
+`cmd/shops` applies the migrations (`-db`, env `DATABASE_URL`), then reads the whole shop into an unlogged
+`stage_shop_works` table, logging every 10 pages. Only once every page is read does it replace the shop's works,
+in one transaction: it deletes the `chapters` rows and inserts the staged books, then runs `ANALYZE works`. A
+failed or interrupted run (Ctrl+C) drops the stage and leaves the works untouched; with `-max-pages` it stops after
+that many pages and changes nothing. Open Library rows and the indexes are left alone, and `work_keywords` has no
+foreign key, so `cmd/index` then only extracts new or edited books.
+
+A shop row gets `search_tsv` like an Open Library work (title and authors A, genre B, description C) and the
+description with `description_source = 'edition'`. Its `first_publish_year` is the edition year, and it has no
+original language, page count, subjects or ratings: filters on language or length exclude it, and `cmd/index`
+reaches it last (most-rated first).
 
 ## Source
 
