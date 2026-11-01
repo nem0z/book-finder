@@ -240,8 +240,17 @@ func (c *Client) post(ctx context.Context, body []byte) (*graphQLResponse, error
 		return nil, err
 	}
 
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		return nil, &retryError{err: fmt.Errorf("shopify: reading response: %w", err)}
+	}
+
 	var out graphQLResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("shopify: bad response: %w", err)
 	}
 

@@ -146,6 +146,19 @@ func TestWalkRetries(t *testing.T) {
 	}
 }
 
+func TestWalkTruncatedBody(t *testing.T) {
+	truncated := func(w http.ResponseWriter) {
+		w.Header().Set("Content-Length", "100000")
+		fmt.Fprint(w, `{"data":{"products":{"pageInfo":`)
+	}
+	c, _, waits := testClient(t, truncated, page("", "9781472277299|Persians [2022]"))
+
+	stats, err := c.Walk(context.Background(), func([]Book, Stats) error { return nil })
+	if err != nil || stats.Requests != 2 || stats.Retries != 1 || stats.Books != 1 || fmt.Sprint(*waits) != "[1s]" {
+		t.Errorf("got %+v, %v, waits %v", stats, err, *waits)
+	}
+}
+
 func TestWalkThrottled(t *testing.T) {
 	c, _, waits := testClient(t, graphQLError("THROTTLED"), graphQLError("THROTTLED"), page(""))
 
