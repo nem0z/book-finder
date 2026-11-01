@@ -20,11 +20,12 @@ type fakeSearcher struct {
 	in      *search.Interpretation
 	err     error
 	query   string
+	filters search.Filters
 	limit   int
 }
 
-func (f *fakeSearcher) SearchInterpreted(_ context.Context, query string, _ search.Filters, limit int) ([]search.Result, *search.Interpretation, error) {
-	f.query, f.limit = query, limit
+func (f *fakeSearcher) SearchInterpreted(_ context.Context, query string, filters search.Filters, limit int) ([]search.Result, *search.Interpretation, error) {
+	f.query, f.filters, f.limit = query, filters, limit
 	return f.results, f.in, f.err
 }
 
@@ -61,8 +62,12 @@ func TestSearch(t *testing.T) {
 	results := body["results"].([]any)
 	first := results[0].(map[string]any)
 	if first["cover_url"] != "https://covers.openlibrary.org/b/id/42-M.jpg" || first["url"] != "https://openlibrary.org/works/OL59048W" ||
-		first["pages"] != 245.0 || first["year"] != 1989.0 {
+		first["pages"] != 245.0 || first["year"] != 1989.0 || first["source"] != "openlibrary" {
 		t.Errorf("first: %v", first)
+	}
+
+	if s.filters.InShop {
+		t.Error("all books should be searched without shop=1")
 	}
 
 	second := results[1].(map[string]any)
@@ -89,11 +94,27 @@ func TestSearchInterpretation(t *testing.T) {
 	}
 }
 
+func TestSearchInShop(t *testing.T) {
+	s := &fakeSearcher{results: []search.Result{{ID: "chapters:9780000000001", Title: "Orbital", Source: "chapters",
+		SourceURL: "https://chaptersbookstore.com/products/orbital", CoverURL: "https://cdn.shopify.com/orbital.jpg"}}}
+	_, body := get(t, NewHandler(s, slog.New(slog.NewTextHandler(io.Discard, nil))), "/search?q=space&shop=1")
+	if !s.filters.InShop {
+		t.Error("shop=1 should search only bookshop books")
+	}
+
+	book := body["results"].([]any)[0].(map[string]any)
+	if book["url"] != "https://chaptersbookstore.com/products/orbital" || book["cover_url"] != "https://cdn.shopify.com/orbital.jpg" ||
+		book["source"] != "chapters" {
+		t.Errorf("bookshop book: %v", book)
+	}
+}
+
 func TestSearchErrors(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	for target, want := range map[string]int{
-		"/search":       http.StatusBadRequest,
-		"/search?q=%20": http.StatusBadRequest,
+		"/search":                http.StatusBadRequest,
+		"/search?q=%20":          http.StatusBadRequest,
+		"/search?q=x&shop=maybe": http.StatusBadRequest,
 		"/search?q=" + strings.Repeat("a", maxQueryBytes+1): http.StatusBadRequest,
 	} {
 		if rec, body := get(t, NewHandler(&fakeSearcher{}, log), target); rec.Code != want || body["error"] == "" {

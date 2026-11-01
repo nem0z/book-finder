@@ -4,6 +4,9 @@ import type { Book } from "./api";
 // Descriptions longer than this are cut, with a "See more" button.
 const PREVIEW_CHARS = 400;
 
+// Display names of the bookshops in works.source.
+const SHOPS: Record<string, string> = { chapters: "Chapters Bookstore" };
+
 export default function BookCard({ book }: { book: Book }) {
   const [expanded, setExpanded] = useState(false);
   const long = book.description.length > PREVIEW_CHARS;
@@ -26,6 +29,15 @@ export default function BookCard({ book }: { book: Book }) {
         <p className="meta">
           {[book.authors.join(", "), book.year, book.pages && `${book.pages} pages`].filter(Boolean).join(" · ")}
         </p>
+        {SHOPS[book.source] && (
+          <p className="shop">
+            At{" "}
+            <a href={book.url} target="_blank" rel="noreferrer">
+              {SHOPS[book.source]}
+            </a>
+            , Dublin
+          </p>
+        )}
 
         <p className="description">{text}</p>
         {long && (

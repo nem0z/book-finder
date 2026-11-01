@@ -30,6 +30,7 @@ WITH nearest AS MATERIALIZED (
     SELECT w.id, w.title, w.author_names, coalesce(w.first_publish_year, 0) AS year,
            coalesce(w.page_count, 0) AS pages, coalesce(w.original_language, '') AS lang,
            w.description, w.genres, w.subjects, coalesce(w.cover_id, 0) AS cover_id, w.rating_count,
+           w.source, coalesce(w.source_url, '') AS source_url, coalesce(w.cover_url, '') AS cover_url,
            e.embedding <=> $1::halfvec AS distance
     FROM work_keyword_embeddings e
     JOIN works w ON w.id = e.work_id
@@ -39,11 +40,12 @@ WITH nearest AS MATERIALIZED (
       AND ($5 = 0 OR w.page_count >= $5)
       AND ($6 = 0 OR w.page_count <= $6)
       AND ($7 = '' OR w.original_language = $7)
+      AND (NOT $9 OR w.source <> 'openlibrary')
     ORDER BY e.embedding <=> $1::halfvec
     LIMIT $8
 )
 SELECT id, title, author_names, year, pages, lang, description, genres, subjects, cover_id, rating_count,
-       1 - distance
+       source, source_url, cover_url, 1 - distance
 FROM nearest
 ORDER BY distance`
 
@@ -60,6 +62,7 @@ type Filters struct {
 	MinYear, MaxYear   int
 	MinPages, MaxPages int
 	OriginalLanguage   string // MARC code, e.g. "eng", "jpn"
+	InShop             bool   // only works listed by a bookshop (works.source other than openlibrary)
 }
 
 type Result struct {
@@ -73,6 +76,9 @@ type Result struct {
 	Tags             []string `json:"tags"`               // genres then subjects, without generic ones
 	CoverID          int64    `json:"cover_id,omitempty"` // Open Library cover ID
 	RatingCount      int      `json:"rating_count"`
+	Source           string   `json:"source"`                 // works.source: openlibrary or a bookshop
+	SourceURL        string   `json:"source_url,omitempty"`   // the bookshop's product page
+	CoverURL         string   `json:"cover_url,omitempty"`    // the bookshop's cover
 	Similarity       float64  `json:"similarity"`             // cosine similarity of the keyword vector, 1 = same direction
 	RerankScore      float64  `json:"rerank_score,omitempty"` // set by Rerank; higher is more relevant
 }
@@ -105,7 +111,7 @@ func KeywordVectors(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, 
 	}
 
 	rows, err := tx.Query(ctx, keywordVectorSQL, embed.VectorLiteral(vec), emb.Model(), f.MinYear, f.MaxYear,
-		f.MinPages, f.MaxPages, f.OriginalLanguage, limit)
+		f.MinPages, f.MaxPages, f.OriginalLanguage, limit, f.InShop)
 	if err != nil {
 		return nil, fmt.Errorf("search: %w", err)
 	}
@@ -122,7 +128,7 @@ func scanResults(rows pgx.Rows) ([]Result, error) {
 		var year, pages int16
 		var genres, subjects []string
 		if err := rows.Scan(&r.ID, &r.Title, &r.Authors, &year, &pages, &r.OriginalLanguage, &r.Description,
-			&genres, &subjects, &r.CoverID, &r.RatingCount, &r.Similarity); err != nil {
+			&genres, &subjects, &r.CoverID, &r.RatingCount, &r.Source, &r.SourceURL, &r.CoverURL, &r.Similarity); err != nil {
 			return nil, err
 		}
 

@@ -211,17 +211,20 @@ Or in Docker, with the other services: `docker compose up -d api` (rebuild after
 `docker compose up -d --build api`).
 
 `GET /search?q=<description>` returns the 10 best matches (vector search, then re-ranking) as JSON: title,
-authors, year, pages, full description, tags, cover URL and Open Library link. When an LLM read the query (see
+authors, year, pages, full description, tags, cover URL, `source` (`openlibrary` or a bookshop, `chapters`) and a
+link to the Open Library page or the bookshop's product page. `&shop=1` searches only the books a bookshop lists
+(see `cmd/shops`). When an LLM read the query (see
 [Query understanding](#query-understanding-optional)), `interpretation` gives the keywords it searched for and
-the filters it applied (`min_year`, `max_year`, `min_pages`, `max_pages`); the web page shows them above the
-results. It is absent when the query was searched as typed. Flags: `-addr`
+the filters it applied (`min_year`, `max_year`, `min_pages`, `max_pages`, `in_shop`); the web page shows them above
+the results. It is absent when the query was searched as typed. Flags: `-addr`
 (default `localhost:8080`), `-no-rerank`, and the same `-db`, `-ollama`, `-reranker`, `-voyage-model`, `-llm`,
 `-llm-url`, `-llm-model` and `-llm-timeout` as `cmd/search`.
 
 ## Web app
 
 A React page with a search box and the results below: cover, title, authors, year, pages, description
-(long ones cut, with "See more") and tags. It needs Node 24+ and the API running (`go run ./cmd/api`):
+(long ones cut, with "See more") and tags. "In a Dublin bookshop" searches only the books a bookshop lists, which
+link to the shop's page. It needs Node 24+ and the API running (`go run ./cmd/api`):
 
 ```sh
 cd web
