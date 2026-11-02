@@ -54,6 +54,24 @@ h1 {
   color: #b42318;
 }
 
+.shop-toggle {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+  margin-top: 0.5rem;
+  cursor: pointer;
+}
+
+.shop {
+  margin: -0.5rem 0 0.75rem;
+  font-weight: 600;
+  color: #1a7f37;
+}
+
+.shop a {
+  color: inherit;
+}
+
 .understood {
   margin: 1.5rem 0 0;
   padding: 0.75rem 1rem;

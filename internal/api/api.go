@@ -2,6 +2,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/nem0z/book-finder/internal/search"
+	"github.com/nem0z/book-finder/internal/shops"
 )
 
 const (
@@ -39,7 +41,17 @@ type Book struct {
 	Description string   `json:"description"`
 	Tags        []string `json:"tags"`
 	CoverURL    string   `json:"cover_url,omitempty"`
-	URL         string   `json:"url"` // the work's Open Library page
+	URL         string   `json:"url"`    // the bookshop's product page, else the work's Open Library page
+	Source      string   `json:"source"` // openlibrary or a bookshop's ID (shops.All)
+	Shops       []Shop   `json:"shops"`  // the bookshops selling this book (same ISBN-13)
+}
+
+// Shop is a bookshop selling a book.
+type Shop struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	URL     string `json:"url"` // the book's page at the shop
+	InStock bool   `json:"in_stock"`
 }
 
 type searchResponse struct {
@@ -63,6 +75,7 @@ type Filters struct {
 	MinPages         int    `json:"min_pages,omitempty"`
 	MaxPages         int    `json:"max_pages,omitempty"`
 	OriginalLanguage string `json:"original_language,omitempty"`
+	InShop           bool   `json:"in_shop,omitempty"`
 }
 
 type errorResponse struct {
@@ -74,7 +87,8 @@ type handler struct {
 	log      *slog.Logger
 }
 
-// NewHandler returns the API's routes: GET /search?q=<description of the book>.
+// NewHandler returns the API's routes: GET /search?q=<description of the book>, with shop=1 for only the books a
+// bookshop lists.
 func NewHandler(s Searcher, log *slog.Logger) http.Handler {
 	h := &handler{searcher: s, log: log}
 	mux := http.NewServeMux()
@@ -94,7 +108,13 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, in, err := h.searcher.SearchInterpreted(r.Context(), query, search.Filters{}, ResultLimit)
+	inShop, err := strconv.ParseBool(cmp.Or(r.URL.Query().Get("shop"), "false"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{"shop must be 1 or 0"})
+		return
+	}
+
+	results, in, err := h.searcher.SearchInterpreted(r.Context(), query, search.Filters{InShop: inShop}, ResultLimit)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -121,10 +141,11 @@ func (h *handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 func toBook(r search.Result) Book {
 	b := Book{
 		ID: r.ID, Title: r.Title, Authors: r.Authors, Year: r.Year, Pages: r.Pages,
-		Description: r.Description, Tags: r.Tags, URL: openLibraryURL + r.ID,
+		Description: r.Description, Tags: r.Tags, URL: cmp.Or(r.SourceURL, openLibraryURL+r.ID),
+		Source: cmp.Or(r.Source, "openlibrary"), CoverURL: r.CoverURL,
 	}
 
-	if r.CoverID > 0 {
+	if b.CoverURL == "" && r.CoverID > 0 {
 		b.CoverURL = fmt.Sprintf(coverURL, r.CoverID)
 	}
 
@@ -134,6 +155,14 @@ func toBook(r search.Result) Book {
 
 	if b.Tags == nil {
 		b.Tags = []string{}
+	}
+
+	b.Shops = make([]Shop, len(r.Shops))
+	for i, o := range r.Shops {
+		b.Shops[i] = Shop{ID: o.Source, Name: o.Source, URL: o.URL, InStock: o.InStock}
+		if s, err := shops.Find(o.Source); err == nil {
+			b.Shops[i].Name = s.Name
+		}
 	}
 
 	return b
@@ -149,7 +178,7 @@ func toInterpretation(in *search.Interpretation) *Interpretation {
 	return &Interpretation{
 		Keywords: in.Text,
 		Filters: Filters{MinYear: f.MinYear, MaxYear: f.MaxYear, MinPages: f.MinPages, MaxPages: f.MaxPages,
-			OriginalLanguage: f.OriginalLanguage},
+			OriginalLanguage: f.OriginalLanguage, InShop: f.InShop},
 	}
 }
 

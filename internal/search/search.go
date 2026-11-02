@@ -24,12 +24,15 @@ const (
 // keywordVectorSQL returns the $8 works whose keyword vector (work_keyword_embeddings), computed by model $2, is
 // nearest to the $1 vector. Filters are applied while walking the HNSW index (pgvector iterative scans), so
 // strict filters still return up to $8 results. relaxed_order may return rows slightly out of order, hence the
-// outer sort.
+// outer sort. Bookshop works with the same ISBN-13 (the book at several shops) are kept once, the nearest, so a
+// few less than $8 can come back; each work lists the shops that sell its ISBN-13.
 const keywordVectorSQL = `
 WITH nearest AS MATERIALIZED (
     SELECT w.id, w.title, w.author_names, coalesce(w.first_publish_year, 0) AS year,
            coalesce(w.page_count, 0) AS pages, coalesce(w.original_language, '') AS lang,
            w.description, w.genres, w.subjects, coalesce(w.cover_id, 0) AS cover_id, w.rating_count,
+           w.source, coalesce(w.source_url, '') AS source_url, coalesce(w.cover_url, '') AS cover_url, w.isbn_13,
+           CASE WHEN w.source <> 'openlibrary' AND w.isbn_13 IS NOT NULL THEN w.isbn_13 ELSE w.id END AS book,
            e.embedding <=> $1::halfvec AS distance
     FROM work_keyword_embeddings e
     JOIN works w ON w.id = e.work_id
@@ -39,13 +42,23 @@ WITH nearest AS MATERIALIZED (
       AND ($5 = 0 OR w.page_count >= $5)
       AND ($6 = 0 OR w.page_count <= $6)
       AND ($7 = '' OR w.original_language = $7)
+      AND (NOT $9 OR w.source <> 'openlibrary')
     ORDER BY e.embedding <=> $1::halfvec
     LIMIT $8
+), books AS (
+    SELECT DISTINCT ON (book) * FROM nearest ORDER BY book, distance
 )
-SELECT id, title, author_names, year, pages, lang, description, genres, subjects, cover_id, rating_count,
-       1 - distance
-FROM nearest
-ORDER BY distance`
+SELECT b.id, b.title, b.author_names, b.year, b.pages, b.lang, b.description, b.genres, b.subjects, b.cover_id,
+       b.rating_count, b.source, b.source_url, b.cover_url,
+       coalesce(s.sources, '{}'), coalesce(s.urls, '{}'), coalesce(s.in_stock, '{}'), 1 - b.distance
+FROM books b
+LEFT JOIN LATERAL (
+    SELECT array_agg(o.source ORDER BY o.source) AS sources, array_agg(o.source_url ORDER BY o.source) AS urls,
+           array_agg(coalesce(o.in_stock, false) ORDER BY o.source) AS in_stock
+    FROM works o
+    WHERE o.isbn_13 = b.isbn_13 AND o.source <> 'openlibrary'
+) s ON true
+ORDER BY b.distance`
 
 var ErrEmptyQuery = errors.New("empty query")
 
@@ -60,6 +73,7 @@ type Filters struct {
 	MinYear, MaxYear   int
 	MinPages, MaxPages int
 	OriginalLanguage   string // MARC code, e.g. "eng", "jpn"
+	InShop             bool   // only works listed by a bookshop (works.source other than openlibrary)
 }
 
 type Result struct {
@@ -73,8 +87,19 @@ type Result struct {
 	Tags             []string `json:"tags"`               // genres then subjects, without generic ones
 	CoverID          int64    `json:"cover_id,omitempty"` // Open Library cover ID
 	RatingCount      int      `json:"rating_count"`
+	Source           string   `json:"source"`                 // works.source: openlibrary or a bookshop
+	SourceURL        string   `json:"source_url,omitempty"`   // the bookshop's product page
+	CoverURL         string   `json:"cover_url,omitempty"`    // the bookshop's cover
+	Shops            []Offer  `json:"shops,omitempty"`        // the bookshops selling the work's ISBN-13
 	Similarity       float64  `json:"similarity"`             // cosine similarity of the keyword vector, 1 = same direction
 	RerankScore      float64  `json:"rerank_score,omitempty"` // set by Rerank; higher is more relevant
+}
+
+// Offer is a bookshop selling a book.
+type Offer struct {
+	Source  string `json:"source"` // the shop's ID (works.source)
+	URL     string `json:"url"`
+	InStock bool   `json:"in_stock"`
 }
 
 // KeywordVectors returns up to limit works matching f whose keyword vector is closest to the query's. A
@@ -105,7 +130,7 @@ func KeywordVectors(ctx context.Context, pool *pgxpool.Pool, emb QueryEmbedder, 
 	}
 
 	rows, err := tx.Query(ctx, keywordVectorSQL, embed.VectorLiteral(vec), emb.Model(), f.MinYear, f.MaxYear,
-		f.MinPages, f.MaxPages, f.OriginalLanguage, limit)
+		f.MinPages, f.MaxPages, f.OriginalLanguage, limit, f.InShop)
 	if err != nil {
 		return nil, fmt.Errorf("search: %w", err)
 	}
@@ -120,13 +145,19 @@ func scanResults(rows pgx.Rows) ([]Result, error) {
 	for rows.Next() {
 		var r Result
 		var year, pages int16
-		var genres, subjects []string
+		var genres, subjects, shopSources, shopURLs []string
+		var shopStock []bool
 		if err := rows.Scan(&r.ID, &r.Title, &r.Authors, &year, &pages, &r.OriginalLanguage, &r.Description,
-			&genres, &subjects, &r.CoverID, &r.RatingCount, &r.Similarity); err != nil {
+			&genres, &subjects, &r.CoverID, &r.RatingCount, &r.Source, &r.SourceURL, &r.CoverURL,
+			&shopSources, &shopURLs, &shopStock, &r.Similarity); err != nil {
 			return nil, err
 		}
 
 		r.Year, r.Pages, r.Tags = int(year), int(pages), embed.Topics(genres, subjects)
+		for i, s := range shopSources {
+			r.Shops = append(r.Shops, Offer{Source: s, URL: shopURLs[i], InStock: shopStock[i]})
+		}
+
 		out = append(out, r)
 	}
 

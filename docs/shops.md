@@ -2,7 +2,7 @@
 
 Besides Open Library, the catalogue holds every book listed by Dublin bookshops with an online store: one `works`
 row per book and shop, with `source` = the shop's ID and id `<source>:<isbn13>`. Books that are also in Open Library,
-or at several shops, are separate rows.
+or at several shops, are separate rows; search brings them together by ISBN-13 (see [Searching](#searching)).
 
 | Shop | ID | Platform | Products |
 |---|---|---|---|
@@ -50,6 +50,17 @@ A shop row gets `search_tsv` like an Open Library work (title and authors A, gen
 description with `description_source = 'edition'`, and `in_stock`. Its `first_publish_year` is the edition year
 when the shop gives one, and it has no original language, page count, subjects or ratings: filters on language or
 length exclude it, and `cmd/index` reaches it last (most-rated first).
+
+## Searching
+
+Once `cmd/index` gave them keyword vectors, shop rows are searched like Open Library works. "In a Dublin bookshop"
+on the web page (`shop=1` on `GET /search`, `-shop` for `cmd/search`) keeps only shop rows
+(`source <> 'openlibrary'`), filtered while walking the HNSW index like the other filters. Shop rows with the same
+ISBN-13 (the book at several shops) come back once, the nearest, so a search can return a few less candidates than
+asked. Every result lists the shops selling its ISBN-13 (`shops`: ID, name from `shops.All`, product page, in
+stock), Open Library results included; the web card links to each. A shop result shows the shop's cover. Year
+filters use the edition year, and page or language filters (typed, or read from the query by the LLM) exclude shop
+rows, so with the toggle on they return nothing.
 
 ## Shopify: Chapters Bookstore
 
