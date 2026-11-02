@@ -11,9 +11,9 @@ or at several shops, are separate rows.
 ## Code
 
 `internal/shops` holds what every shop shares: the registry of shops (`shops.All`: ID, name, store URL, platform),
-the `Book` model, the paced HTTP client, text helpers (ISBN-13 check, HTML to text, author names) and the walk that
-counts and skips products (not a book, no title, ISBN-13 already read). Each
-platform has a package that only builds its requests and parses its products into books: `internal/shops/shopify`.
+the `Book` model, the paced HTTP client, text helpers (ISBN-13 check, HTML to text, author names), the walk that
+counts and skips products (not a book, no title, ISBN-13 already read) and the staging of a shop's books. Each
+platform has a package that only builds its requests and parses its products into books: `internal/shops/shopify`. `cmd/shops` picks the package from the shop's platform.
 
 **Adding a shop** on a known platform is one entry in `shops.All`; its ID (lowercase letters and digits) becomes the
 works source, so no migration is needed. Check the shop's rules and how its products carry the ISBN and author before adding it.
@@ -22,6 +22,31 @@ The client identifies itself (`User-Agent: book-finder/1.0 (+https://github.com/
 request at most every 2 s, and tries again after a 429, a 5xx, a network error, a body cut short or an error the
 platform marks as worth retrying (Shopify's `THROTTLED`), waiting what `Retry-After` asks or 30 s doubled each
 time (at most 5 min, 6 tries). Other errors stop that shop's run.
+
+## Refreshing
+
+Run by hand, locally, in this order:
+
+```sh
+go run ./cmd/shops -shop chapters -max-pages 1   # optional trial: reads 1 page, changes nothing
+go run ./cmd/shops                                # every shop, one after the other (-shop <id> for one)
+LLM_PROVIDER=copilot LLM_MODEL=claude-haiku-5.5 go run ./cmd/index -dry-run   # how many works to extract
+LLM_PROVIDER=copilot LLM_MODEL=claude-haiku-5.5 go run ./cmd/index
+./deploy/azure/restore-db.ps1     # only to publish the database (see docs/azure.md)
+```
+
+`cmd/shops` applies the migrations (`-db`, env `DATABASE_URL`), then reads each shop into its own unlogged
+`stage_works_<id>` table, logging every 10 pages. Only once every page is read does it replace the shop's works,
+in one transaction: it deletes the shop's rows and inserts the staged books, then runs `ANALYZE works`. A failed or
+interrupted run (Ctrl+C) drops the stage and leaves that shop's works untouched, and the next shop is still loaded;
+with `-max-pages` it stops after that many pages and changes nothing. Open Library rows, other shops' rows and the
+indexes are left alone, and `work_keywords` has no foreign key, so `cmd/index` then only extracts new or edited
+books.
+
+A shop row gets `search_tsv` like an Open Library work (title and authors A, genres B, description C), the
+description with `description_source = 'edition'`, and `in_stock`. Its `first_publish_year` is the edition year
+when the shop gives one, and it has no original language, page count, subjects or ratings: filters on language or
+length exclude it, and `cmd/index` reaches it last (most-rated first).
 
 ## Shopify: Chapters Bookstore
 

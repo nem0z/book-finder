@@ -1,6 +1,6 @@
 // Package shops reads the catalogues of bookshops' online stores and turns their products into books, to be
 // stored as works of the shop's source (see docs/shops.md). What is common to every shop lives here: the
-// registry of shops, the book model, the paced HTTP client and text helpers.
+// registry of shops, the book model, the paced HTTP client, text helpers and the staging of a shop's books.
 // Each e-commerce platform (package shopify) only builds its requests and parses its products.
 package shops
 

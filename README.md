@@ -55,7 +55,17 @@ go run ./cmd/ingest \
 
 It applies the migrations, then rebuilds the Open Library catalogue from scratch: the existing Open Library `works`,
 and all `authors` and `work_authors` rows, are replaced. Bookshop works (`source` other than `openlibrary`) are kept.
-See [docs/schema.md](docs/schema.md) for what is kept, and [docs/shops.md](docs/shops.md) for the bookshop sources.
+See [docs/schema.md](docs/schema.md) for what is kept.
+
+To add or refresh the books of Dublin bookshops (Chapters Bookstore), then index them with `cmd/index`:
+
+```sh
+go run ./cmd/shops                 # every shop; -shop chapters for one
+```
+
+It reads each shop whole (Chapters about 40 minutes), then replaces its works in one transaction; a failed or
+interrupted run leaves that shop's works as they were, and `-max-pages N` is a trial that changes nothing. See
+[docs/shops.md](docs/shops.md).
 
 ## Index the catalogue
 
