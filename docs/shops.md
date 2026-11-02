@@ -7,16 +7,20 @@ or at several shops, are separate rows; search brings them together by ISBN-13 (
 | Shop | ID | Platform | Products |
 |---|---|---|---|
 | [Chapters Bookstore](https://chaptersbookstore.com) | `chapters` | Shopify | about 281,000 |
+| [Books Upstairs](https://booksupstairs.ie) | `booksupstairs` | WooCommerce | about 26,000 |
 
 ## Code
 
 `internal/shops` holds what every shop shares: the registry of shops (`shops.All`: ID, name, store URL, platform),
 the `Book` model, the paced HTTP client, text helpers (ISBN-13 check, HTML to text, author names), the walk that
 counts and skips products (not a book, no title, ISBN-13 already read) and the staging of a shop's books. Each
-platform has a package that only builds its requests and parses its products into books: `internal/shops/shopify`. `cmd/shops` picks the package from the shop's platform.
+platform has a package that only builds its requests and parses its products into books: `internal/shops/shopify`
+and `internal/shops/woocommerce`. `cmd/shops` picks the package from the shop's platform.
 
 **Adding a shop** on a known platform is one entry in `shops.All`; its ID (lowercase letters and digits) becomes the
-works source, so no migration is needed. Check the shop's rules and how its products carry the ISBN and author before adding it.
+works source, so no migration is needed. Other Dublin shops checked on 2026-11-02 run on the same platforms: The
+Gutter Bookshop, An Siopa Leabhar and Ulysses Rare Books on WooCommerce, The Secret Book & Record Store on Shopify.
+Check the shop's rules and how its products carry the ISBN and author before adding it.
 
 The client identifies itself (`User-Agent: book-finder/1.0 (+https://github.com/nem0z/book-finder)`), starts a
 request at most every 2 s, and tries again after a 429, a 5xx, a network error, a body cut short or an error the
@@ -82,6 +86,23 @@ within 90 s; a full pass takes about 40 minutes.
 | URL, cover, in stock | `onlineStoreUrl` (else `/products/<handle>`), `featuredImage.url`, `availableForSale`      |
 
 Chapters' terms of service forbid scraping. Its catalogue is read for private use only, by hand, at a slow pace.
+
+## WooCommerce: Books Upstairs
+
+The public Store API needs no key: `GET <store>/wp-json/wc/store/v1/products?per_page=100&page=N&orderby=id&order=asc`,
+until the last page (`X-WP-TotalPages`) or an empty one. Ordering by ID puts products added during a run on later
+pages, so none is missed or read twice. Books Upstairs has 260 pages; a full pass takes about 10 minutes.
+
+| Book field  | From the product                                                                                   |
+|-------------|----------------------------------------------------------------------------------------------------|
+| ISBN-13     | `sku`; products without a valid 978/979 ISBN-13 (bundles, gift cards) are skipped                  |
+| title       | `name`, HTML entities decoded; products without a name are skipped                                |
+| authors     | the last part of `short_description` (`Title \| ISBN \| Author`), several joined by `&` or `;`     |
+| genres      | `categories`, without those about how a book is sold (`New Books`, `Book Bundles`, ...)            |
+| description | `description` as plain text                                                                        |
+| URL, cover, in stock | `permalink`, `images[0].src`, `is_in_stock`                                               |
+
+Books Upstairs gives no year or format. Its robots.txt allows the API, and the site has no terms of use.
 
 ## Hodges Figgis
 

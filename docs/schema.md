@@ -35,10 +35,10 @@ with a page count, then an ISBN-13, then a cover; ties go to the most recent edi
 ## Bookshop works
 
 `works.source` says where a row comes from: `openlibrary` (the default) or a bookshop's ID in the shops registry
-(e.g. `chapters`), so adding a shop needs no migration. A bookshop row is one book the shop lists, keyed
-`<source>:<isbn13>`, with the shop's product page in `source_url`, its cover in `cover_url` and its stock in
-`in_stock`; it has no `work_authors` or `authors` rows (`author_names` only). A book can be in Open Library and at
-several shops, as one row each.
+(`chapters`, `booksupstairs`; see [shops.md](shops.md)), so adding a shop needs no migration. A bookshop row is one
+book the shop lists, keyed `<source>:<isbn13>`, with the shop's product page in `source_url`, its cover in
+`cover_url` and its stock in `in_stock`; it has no `work_authors` or `authors` rows (`author_names` only). A book
+can be in Open Library and at several shops, as one row each.
 `cmd/ingest` deletes and rebuilds only the `openlibrary` rows, so bookshop rows survive catalogue reloads; `cmd/shops`
 replaces only its shop's rows (see [shops.md](shops.md)).
 

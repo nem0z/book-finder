@@ -23,6 +23,7 @@ import (
 	"github.com/nem0z/book-finder/internal/db"
 	"github.com/nem0z/book-finder/internal/shops"
 	"github.com/nem0z/book-finder/internal/shops/shopify"
+	"github.com/nem0z/book-finder/internal/shops/woocommerce"
 )
 
 // logEvery is how many pages pass between two progress lines (about 25 s at the client's pace).
@@ -115,6 +116,8 @@ func reader(s shops.Shop, client *shops.Client) (shops.Reader, error) {
 	switch s.Platform {
 	case shops.Shopify:
 		r.Catalog = shopify.New(s, client)
+	case shops.WooCommerce:
+		r.Catalog = woocommerce.New(s, client)
 	default:
 		return r, fmt.Errorf("shop %s: unknown platform %q", s.ID, s.Platform)
 	}
