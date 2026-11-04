@@ -39,7 +39,10 @@ LLM_PROVIDER=copilot LLM_MODEL=claude-haiku-5.5 go run ./cmd/index
 `stage_works_<id>` table, logging every 10 pages. Only once every page is read does it replace the shop's works,
 in one transaction: it deletes the shop's rows and inserts the staged books, then runs `ANALYZE works`. A failed or
 interrupted run (Ctrl+C) drops the stage and leaves that shop's works untouched, and the next shop is still loaded;
-with `-max-pages` it stops after that many pages and changes nothing. Open Library rows, other shops' rows and the
+with `-max-pages` it stops after that many pages (or at the end of a shorter catalogue) and changes nothing. A run
+holds a lock on its shop (a Postgres advisory lock) from staging to replacing, so a second run on the same shop
+stops at once. A run that staged fewer than half as many books as the shop has refuses to replace them, in case
+the catalogue answer was cut short; `-allow-shrink` overrides that. Open Library rows, other shops' rows and the
 indexes are left alone, and `work_keywords` has no foreign key, so `cmd/index` then only extracts new or edited
 books.
 

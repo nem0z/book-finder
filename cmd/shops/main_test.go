@@ -96,7 +96,7 @@ func workIDs(t *testing.T, pool *pgxpool.Pool) string {
 func TestLoad(t *testing.T) {
 	pool := testPool(t)
 	r, _ := testReader(t, http.StatusOK)
-	if err := load(context.Background(), pool, r, 0); err != nil {
+	if err := load(context.Background(), pool, r, options{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -111,13 +111,15 @@ func TestLoadUnchanged(t *testing.T) {
 		wantErr          bool
 		wantRequests     int32
 	}{
-		"failed": {status: http.StatusBadRequest, wantErr: true, wantRequests: 2},
-		"trial":  {status: http.StatusOK, maxPages: 1, wantRequests: 1},
+		"failed":             {status: http.StatusBadRequest, wantErr: true, wantRequests: 2},
+		"trial":              {status: http.StatusOK, maxPages: 1, wantRequests: 1},
+		"trial past the end": {status: http.StatusOK, maxPages: 3, wantRequests: 2},
+		"negative trial":     {status: http.StatusOK, maxPages: -1, wantErr: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			pool := testPool(t)
 			r, requests := testReader(t, tc.status)
-			err := load(context.Background(), pool, r, tc.maxPages)
+			err := load(context.Background(), pool, r, options{maxPages: tc.maxPages})
 			if (err != nil) != tc.wantErr || requests.Load() != tc.wantRequests {
 				t.Errorf("err %v after %d requests", err, requests.Load())
 			}

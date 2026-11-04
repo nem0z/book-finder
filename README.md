@@ -64,7 +64,8 @@ go run ./cmd/shops                 # every shop; -shop chapters for one
 ```
 
 It reads each shop whole (Chapters about 40 minutes), then replaces its works in one transaction; a failed or
-interrupted run leaves that shop's works as they were, and `-max-pages N` is a trial that changes nothing. See
+interrupted run leaves that shop's works as they were, and `-max-pages N` is a trial that changes nothing. A run
+that would leave a shop with less than half its books stops, unless given `-allow-shrink`. See
 [docs/shops.md](docs/shops.md).
 
 ## Index the catalogue

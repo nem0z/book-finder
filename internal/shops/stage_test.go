@@ -2,6 +2,7 @@ package shops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -87,6 +88,7 @@ func TestStageReplace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer stage.Close(ctx) //nolint:errcheck // checked in TestStageClose
 
 	crawdads := Book{Source: "chapters", ISBN13: "9781472277299", Title: "Where the Crawdads Sing",
 		Authors: []string{"Delia Owens"}, Year: 2019, Genres: []string{"Fiction"}, Description: "A marsh girl.",
@@ -137,7 +139,7 @@ func TestStageReplace(t *testing.T) {
 	}
 }
 
-func TestStageDrop(t *testing.T) {
+func TestStageClose(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	before := workRows(t, pool)
@@ -150,16 +152,16 @@ func TestStageDrop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := stage.Drop(ctx); err != nil {
+	if err := stage.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := stage.Drop(ctx); err != nil {
-		t.Errorf("drop again: %v", err)
+	if err := stage.Close(ctx); err != nil {
+		t.Errorf("close again: %v", err)
 	}
 
-	if _, err := stage.Replace(ctx); err == nil {
-		t.Error("replaced from a dropped stage")
+	if _, err := stage.Replace(ctx); !errors.Is(err, ErrClosed) {
+		t.Errorf("replaced from a closed stage: %v", err)
 	}
 
 	if got := workRows(t, pool); fmt.Sprint(got) != fmt.Sprint(before) {
@@ -172,5 +174,106 @@ func TestStageBadSource(t *testing.T) {
 		if _, err := NewStage(context.Background(), nil, source); err == nil {
 			t.Errorf("%q: no error", source)
 		}
+	}
+}
+
+// TestStageBusy checks that two runs cannot hold the same shop's stage, while other shops load freely.
+func TestStageBusy(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	first, err := NewStage(ctx, pool, "chapters")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := first.Add(ctx, []Book{{Source: "chapters", ISBN13: "9780008742775", Title: "Verity", URL: "u"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := NewStage(ctx, pool, "chapters"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("second run on the same shop: %v", err)
+	}
+
+	other, err := NewStage(ctx, pool, "booksupstairs")
+	if err != nil {
+		t.Fatalf("another shop: %v", err)
+	}
+	defer other.Close(ctx) //nolint:errcheck // best effort
+
+	// The first run's stage is intact: the refused run did not drop it.
+	if r, err := first.Replace(ctx); err != nil || r.Inserted != 1 {
+		t.Fatalf("replace: %+v, %v", r, err)
+	}
+
+	if err := first.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	again, err := NewStage(ctx, pool, "chapters")
+	if err != nil {
+		t.Fatalf("after close: %v", err)
+	}
+
+	if err := again.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestStageShrink checks that a stage much smaller than the shop's works does not replace them.
+func TestStageShrink(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO works (id, source, title) VALUES
+		('chapters:9780306406157', 'chapters', 'One'), ('chapters:9780141439600', 'chapters', 'Two'),
+		('chapters:9780140449136', 'chapters', 'Three')`); err != nil {
+		t.Fatal(err)
+	}
+
+	before := workRows(t, pool)
+	stage, err := NewStage(ctx, pool, "chapters")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stage.Close(ctx) //nolint:errcheck // best effort
+
+	if err := stage.Add(ctx, []Book{{Source: "chapters", ISBN13: "9780008742775", Title: "Verity", URL: "u"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := stage.Replace(ctx); !errors.Is(err, ErrShrink) {
+		t.Fatalf("1 book for 4 works: %v", err)
+	}
+
+	if got := workRows(t, pool); fmt.Sprint(got) != fmt.Sprint(before) {
+		t.Errorf("works changed: %q", got)
+	}
+
+	stage.MinShare = 0
+	if r, err := stage.Replace(ctx); err != nil || r != (Replaced{Deleted: 4, Inserted: 1}) {
+		t.Errorf("allowed shrink: %+v, %v", r, err)
+	}
+}
+
+// TestStageCloseCancelled checks that a Close that cannot unlock (cancelled context) still frees the shop.
+func TestStageCloseCancelled(t *testing.T) {
+	pool := testPool(t)
+	stage, err := NewStage(context.Background(), pool, "chapters")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := stage.Close(cancelled); err == nil {
+		t.Error("close with a cancelled context: no error")
+	}
+
+	again, err := NewStage(context.Background(), pool, "chapters")
+	if err != nil {
+		t.Fatalf("shop still locked: %v", err)
+	}
+
+	if err := again.Close(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }

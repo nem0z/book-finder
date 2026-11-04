@@ -30,13 +30,25 @@ const logEvery = 10
 
 var errTrialDone = errors.New("trial pages read")
 
+// options are the flags of a run.
+type options struct {
+	maxPages    int  // > 0: a trial that reads that many pages at most and changes nothing
+	allowShrink bool // replace a shop's works even with far fewer books than it had
+}
+
 func main() {
 	url := flag.String("db", envOr("DATABASE_URL", db.DefaultURL), "Postgres connection URL (env DATABASE_URL)")
 	shop := flag.String("shop", "all", "shop to load: "+strings.Join(shopIDs(), ", ")+", or all")
-	maxPages := flag.Int("max-pages", 0, "trial: read only N pages of products and leave the works unchanged (0: all)")
+	var opts options
+	flag.IntVar(&opts.maxPages, "max-pages", 0, "trial: read only N pages of products and leave the works unchanged (0: all)")
+	flag.BoolVar(&opts.allowShrink, "allow-shrink", false, "replace a shop's works even with less than half as many books")
 	flag.Parse()
 
 	list, err := selectShops(*shop)
+	if err == nil && opts.maxPages < 0 {
+		err = errors.New("-max-pages must be 0 (all) or more")
+	}
+
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -45,14 +57,14 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if err := run(ctx, *url, list, *maxPages); err != nil {
+	if err := run(ctx, *url, list, opts); err != nil {
 		slog.Error("shops failed", "err", err)
 		os.Exit(1)
 	}
 }
 
 // run loads each shop in turn; one failing does not stop the others.
-func run(ctx context.Context, url string, list []shops.Shop, maxPages int) error {
+func run(ctx context.Context, url string, list []shops.Shop, opts options) error {
 	pool, err := db.Connect(ctx, url, nil)
 	if err != nil {
 		return err
@@ -67,7 +79,7 @@ func run(ctx context.Context, url string, list []shops.Shop, maxPages int) error
 	for _, s := range list {
 		r, err := reader(s, shops.NewClient())
 		if err == nil {
-			err = load(ctx, pool, r, maxPages)
+			err = load(ctx, pool, r, opts)
 		}
 
 		if err != nil {
@@ -120,17 +132,26 @@ func shopIDs() []string {
 }
 
 // load stages the shop's books page by page, then replaces its works with them once every page was read.
-// With maxPages > 0, it stops after that many pages and drops the stage.
-func load(ctx context.Context, pool *pgxpool.Pool, r shops.Reader, maxPages int) error {
+// A trial (opts.maxPages > 0) stops after that many pages, or at the end of a shorter catalogue, and changes
+// nothing.
+func load(ctx context.Context, pool *pgxpool.Pool, r shops.Reader, opts options) error {
+	if opts.maxPages < 0 {
+		return errors.New("-max-pages must be 0 (all) or more")
+	}
+
 	stage, err := shops.NewStage(ctx, pool, r.Shop.ID)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if err := stage.Drop(context.WithoutCancel(ctx)); err != nil {
-			slog.Warn("drop stage", "err", err)
+		if err := stage.Close(context.WithoutCancel(ctx)); err != nil {
+			slog.Warn("close stage", "err", err)
 		}
 	}()
+
+	if opts.allowShrink {
+		stage.MinShare = 0
+	}
 
 	slog.Info("reading shop", "shop", r.Shop.ID, "url", r.Shop.URL)
 	start := time.Now()
@@ -146,7 +167,7 @@ func load(ctx context.Context, pool *pgxpool.Pool, r shops.Reader, maxPages int)
 				"took", time.Since(start).Round(time.Second))
 		}
 
-		if maxPages > 0 && pages >= maxPages {
+		if opts.maxPages > 0 && pages >= opts.maxPages {
 			return errTrialDone
 		}
 
@@ -154,14 +175,14 @@ func load(ctx context.Context, pool *pgxpool.Pool, r shops.Reader, maxPages int)
 	})
 	out, _ := json.Marshal(stats)
 	took := time.Since(start).Round(time.Second)
-	if errors.Is(err, errTrialDone) {
-		slog.Info("trial done, works unchanged", "shop", r.Shop.ID, "pages", pages, "took", took, "stats", string(out))
-		return nil
-	}
-
-	if err != nil {
+	if err != nil && !errors.Is(err, errTrialDone) {
 		slog.Info("shop read stopped, works unchanged", "shop", r.Shop.ID, "pages", pages, "took", took, "stats", string(out))
 		return err
+	}
+
+	if opts.maxPages > 0 {
+		slog.Info("trial done, works unchanged", "shop", r.Shop.ID, "pages", pages, "took", took, "stats", string(out))
+		return nil
 	}
 
 	replaced, err := stage.Replace(ctx)
