@@ -42,11 +42,13 @@ type graphQLRequest struct {
 	Variables map[string]any `json:"variables"`
 }
 
+// graphQLResponse is an answer to productsQuery. Its fields are pointers so that a missing or null part, which
+// must not pass for the end of the catalogue, can be told apart from an empty one.
 type graphQLResponse struct {
 	Data *struct {
-		Products struct {
-			PageInfo struct {
-				HasNextPage bool `json:"hasNextPage"`
+		Products *struct {
+			PageInfo *struct {
+				HasNextPage *bool `json:"hasNextPage"`
 			} `json:"pageInfo"`
 			Nodes []product `json:"nodes"`
 		} `json:"products"`
@@ -84,7 +86,7 @@ func (c *Catalog) List(ctx context.Context, page func(items []shops.Item) error)
 			return err
 		}
 
-		if !resp.Data.Products.PageInfo.HasNextPage || len(nodes) == 0 {
+		if !*resp.Data.Products.PageInfo.HasNextPage || len(nodes) == 0 {
 			return nil
 		}
 
@@ -148,8 +150,13 @@ func graphQLError(out graphQLResponse) error {
 		return err
 	}
 
-	if out.Data == nil {
+	switch d := out.Data; {
+	case d == nil:
 		return errors.New("bad response: no data")
+	case d.Products == nil || d.Products.Nodes == nil:
+		return errors.New("bad response: no products")
+	case d.Products.PageInfo == nil || d.Products.PageInfo.HasNextPage == nil:
+		return errors.New("bad response: no pageInfo.hasNextPage")
 	}
 
 	return nil

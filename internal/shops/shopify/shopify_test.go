@@ -136,9 +136,15 @@ func TestListGraphQLErrors(t *testing.T) {
 	}
 
 	for name, resp := range map[string]string{
-		"denied":   `{"errors":[{"message":"no","extensions":{"code":"ACCESS_DENIED"}}]}`,
-		"bad JSON": "<html>",
-		"no data":  "{}",
+		"denied":         `{"errors":[{"message":"no","extensions":{"code":"ACCESS_DENIED"}}]}`,
+		"bad JSON":       "<html>",
+		"no data":        "{}",
+		"empty data":     `{"data":{}}`,
+		"null products":  `{"data":{"products":null}}`,
+		"no nodes":       `{"data":{"products":{"pageInfo":{"hasNextPage":false}}}}`,
+		"null nodes":     `{"data":{"products":{"pageInfo":{"hasNextPage":false},"nodes":null}}}`,
+		"no pageInfo":    `{"data":{"products":{"nodes":[]}}}`,
+		"no hasNextPage": `{"data":{"products":{"pageInfo":{},"nodes":[]}}}`,
 	} {
 		c, s := testCatalog(t, resp, page(1, false))
 		if _, err := list(c); err == nil || !strings.HasPrefix(err.Error(), "shopify: ") || len(s.queries) != 1 {
