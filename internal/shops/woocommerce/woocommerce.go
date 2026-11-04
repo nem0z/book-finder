@@ -2,6 +2,7 @@
 package woocommerce
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -47,12 +48,22 @@ func New(shop shops.Shop, client *shops.Client) *Catalog {
 	return &Catalog{shop: shop, client: client}
 }
 
-// List pages through every product by increasing ID, so products added during a run land on later pages.
+// List pages through every product by increasing ID, so products added during a run land on later pages. It ends
+// after the last page the store announces (X-WP-TotalPages); an empty page before it is an error, not the end, so
+// an answer cut short cannot pass for a complete catalogue.
 func (c *Catalog) List(ctx context.Context, page func(items []shops.Item) error) error {
 	for n := 1; ; n++ {
 		products, pages, err := c.fetch(ctx, n)
 		if err != nil {
 			return err
+		}
+
+		if len(products) == 0 {
+			if n <= pages {
+				return fmt.Errorf("woocommerce: page %d of %d is empty", n, pages)
+			}
+
+			return nil
 		}
 
 		items := make([]shops.Item, len(products))
@@ -64,7 +75,7 @@ func (c *Catalog) List(ctx context.Context, page func(items []shops.Item) error)
 			return err
 		}
 
-		if n >= pages || len(products) == 0 {
+		if n >= pages {
 			return nil
 		}
 	}
@@ -76,6 +87,10 @@ func (c *Catalog) fetch(ctx context.Context, n int) ([]product, int, error) {
 	var products []product
 	resp, err := c.client.Do(ctx, shops.Request{Method: "GET", URL: url}, func(r shops.Response) error {
 		products = nil
+		if !bytes.HasPrefix(bytes.TrimSpace(r.Body), []byte("[")) {
+			return fmt.Errorf("bad response: not a list of products: %.80q", r.Body)
+		}
+
 		if err := json.Unmarshal(r.Body, &products); err != nil {
 			return fmt.Errorf("bad response: %w", err)
 		}
@@ -87,7 +102,7 @@ func (c *Catalog) fetch(ctx context.Context, n int) ([]product, int, error) {
 	}
 
 	pages, err := strconv.Atoi(resp.Header.Get("X-WP-TotalPages"))
-	if err != nil {
+	if err != nil || pages < 0 {
 		return nil, 0, fmt.Errorf("woocommerce: bad X-WP-TotalPages %q", resp.Header.Get("X-WP-TotalPages"))
 	}
 

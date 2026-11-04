@@ -90,8 +90,10 @@ Chapters' terms of service forbid scraping. Its catalogue is read for private us
 ## WooCommerce: Books Upstairs
 
 The public Store API needs no key: `GET <store>/wp-json/wc/store/v1/products?per_page=100&page=N&orderby=id&order=asc`,
-until the last page (`X-WP-TotalPages`) or an empty one. Ordering by ID puts products added during a run on later
-pages, so none is missed or read twice. Books Upstairs has 260 pages; a full pass takes about 10 minutes.
+until the last page announced by `X-WP-TotalPages`. An empty page before it, or an answer that is not a list of
+products, stops the run with an error rather than passing for the end of the catalogue. Ordering by ID puts products
+added during a run on later pages, so none is missed or read twice. Books Upstairs has 260 pages; a full pass takes
+about 10 minutes.
 
 | Book field  | From the product                                                                                   |
 |-------------|----------------------------------------------------------------------------------------------------|

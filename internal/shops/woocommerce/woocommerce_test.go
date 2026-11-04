@@ -113,21 +113,33 @@ func TestList(t *testing.T) {
 }
 
 func TestListEnds(t *testing.T) {
-	// An empty page ends the list even when the total says otherwise.
+	ignore := func([]shops.Item) error { return nil }
+
+	// An empty page before the last announced one is an error, not the end of the catalogue.
 	c, asked := testCatalog(t, page(5, hogfather), page(5))
-	if err := c.List(context.Background(), func([]shops.Item) error { return nil }); err != nil || len(*asked) != 2 {
-		t.Errorf("empty page: %v, pages %v", err, *asked)
+	if err := c.List(context.Background(), ignore); err == nil || !strings.Contains(err.Error(), "page 2 of 5 is empty") || len(*asked) != 2 {
+		t.Errorf("empty page 2 of 5: %v, pages %v", err, *asked)
 	}
 
-	noTotal := func(w http.ResponseWriter, _ int) { fmt.Fprint(w, "[]") }
-	c, _ = testCatalog(t, noTotal)
-	if err := c.List(context.Background(), func([]shops.Item) error { return nil }); err == nil || !strings.Contains(err.Error(), "X-WP-TotalPages") {
-		t.Errorf("no total: %v", err)
+	// A store without products announces no pages.
+	c, _ = testCatalog(t, page(0))
+	if err := c.List(context.Background(), ignore); err != nil {
+		t.Errorf("empty store: %v", err)
 	}
 
-	html := func(w http.ResponseWriter, _ int) { w.Header().Set("X-WP-TotalPages", "1"); fmt.Fprint(w, "<html>") }
-	c, _ = testCatalog(t, html)
-	if err := c.List(context.Background(), func([]shops.Item) error { return nil }); err == nil || !strings.HasPrefix(err.Error(), "woocommerce: ") {
-		t.Errorf("bad JSON: %v", err)
+	for name, resp := range map[string]func(w http.ResponseWriter, n int){
+		"no total":  func(w http.ResponseWriter, _ int) { fmt.Fprint(w, "[]") },
+		"bad total": func(w http.ResponseWriter, _ int) { w.Header().Set("X-WP-TotalPages", "-1"); fmt.Fprint(w, "[]") },
+		"null":      func(w http.ResponseWriter, _ int) { w.Header().Set("X-WP-TotalPages", "5"); fmt.Fprint(w, "null") },
+		"not a list": func(w http.ResponseWriter, _ int) {
+			w.Header().Set("X-WP-TotalPages", "1")
+			fmt.Fprint(w, `{"code":"x"}`)
+		},
+		"bad JSON": func(w http.ResponseWriter, _ int) { w.Header().Set("X-WP-TotalPages", "1"); fmt.Fprint(w, "<html>") },
+	} {
+		c, _ := testCatalog(t, resp)
+		if err := c.List(context.Background(), ignore); err == nil || !strings.HasPrefix(err.Error(), "woocommerce: ") {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
