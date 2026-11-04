@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/nem0z/book-finder/internal/llm"
@@ -18,7 +19,7 @@ const (
 	// batchInstructions follow SystemPrompt when a request holds several books.
 	batchInstructions = `
 
-You receive several books, each starting with a "Book <id>" line. Index each book on its own, as if it were the only one. Return {"books": [...]} with one entry per book, in the order received, each with its "id" and the fields above.`
+You receive several books, each starting with a "Book <number>" line. Index each book on its own, as if it were the only one. Return {"books": [...]} with one entry per book, in the order received, each with its number as "id" and the fields above.`
 )
 
 var (
@@ -83,10 +84,11 @@ func Extract(ctx context.Context, client llm.Client, b Book) (Keywords, error) {
 }
 
 // ExtractBatch asks client for the keywords of several books in one request, which saves repeating the
-// instructions and the per-request overhead. Each book has an ID in the request and must have it in the
-// answer. It returns the keywords of the books the answer covers, by ID: a book missing from the answer is
-// missing from the map. When the answer has an ID twice or an ID it was not asked about, it returns
-// ErrMixedUp and no keywords.
+// instructions and the per-request overhead. The request numbers the books from 1, and the answer must give
+// each book its number: models copy a short number reliably, unlike some work IDs ("chapters:978…" came back
+// as the bare ISBN). It returns the keywords of the books the answer covers, by work ID: a book missing from
+// the answer is missing from the map. When the answer has a number twice or one it was not asked about, it
+// returns ErrMixedUp and no keywords.
 func ExtractBatch(ctx context.Context, client llm.Client, books []Book) (map[string]Keywords, error) {
 	if len(books) == 1 {
 		k, err := Extract(ctx, client, books[0])
@@ -108,18 +110,19 @@ func ExtractBatch(ctx context.Context, client llm.Client, books []Book) (map[str
 		return nil, fmt.Errorf("%s and %d more: %w", books[0].ID, len(books)-1, err)
 	}
 
-	want := map[string]bool{}
-	for _, b := range books {
-		want[b.ID] = true
+	want := map[string]string{} // number in the request -> work ID
+	for i, b := range books {
+		want[strconv.Itoa(i+1)] = b.ID
 	}
 
 	out := map[string]Keywords{}
 	for _, a := range answer.Books {
-		if _, dup := out[a.ID]; dup || !want[a.ID] {
+		id, ok := want[strings.TrimSpace(a.ID)]
+		if _, dup := out[id]; dup || !ok {
 			return nil, fmt.Errorf("%w: book %q", ErrMixedUp, a.ID)
 		}
 
-		out[a.ID] = a.Keywords
+		out[id] = a.Keywords
 	}
 
 	return out, nil
@@ -181,11 +184,11 @@ func ExtractGroup(ctx context.Context, client llm.Client, books []Book, attempts
 	return r
 }
 
-// BatchMessage is what the model reads about several books.
+// BatchMessage is what the model reads about several books, numbered from 1.
 func BatchMessage(books []Book) string {
 	parts := make([]string, len(books))
 	for i, b := range books {
-		parts[i] = "Book " + b.ID + "\n" + UserMessage(b)
+		parts[i] = "Book " + strconv.Itoa(i+1) + "\n" + UserMessage(b)
 	}
 
 	return strings.Join(parts, "\n\n---\n\n")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -126,5 +127,48 @@ func TestKeywordVectors(t *testing.T) {
 
 	if res, err := e.Retrieve(ctx, "a query", Filters{}, 10); err != nil || len(res) != 3 || res[0].ID != "OL1W" {
 		t.Errorf("retrieved: %+v, %v", res, err)
+	}
+}
+
+// TestKeywordVectorsInShop also checks a shop work whose description a refresh removed while its keyword vector
+// remains: it must not break the search.
+func TestKeywordVectorsInShop(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO works (id, title, description, isbn_13) VALUES ('OL1W', 'Open Library', 'd', '9780000000001');
+		INSERT INTO works (id, title, description, isbn_13, source, source_url, cover_url, in_stock) VALUES
+		('chapters:9780000000001', 'Bookshop', 'd', '9780000000001', 'chapters', 'https://chapters/p/1', 'https://cdn/1.jpg', true),
+		('booksupstairs:9780000000001', 'Bookshop', 'd', '9780000000001', 'booksupstairs', 'https://upstairs/p/1', NULL, false),
+		('booksupstairs:9780000000002', 'Other', NULL, '9780000000002', 'booksupstairs', 'https://upstairs/p/2', NULL, NULL)`); err != nil {
+		t.Fatal(err)
+	}
+
+	for id, v := range map[string][]float32{"OL1W": axis(1, 1), "chapters:9780000000001": axis(1, 0.5),
+		"booksupstairs:9780000000001": axis(1, 0.4), "booksupstairs:9780000000002": axis(2, 1)} {
+		if _, err := pool.Exec(ctx, "INSERT INTO work_keyword_embeddings (work_id, model, content_hash, embedding) VALUES ($1, 'fake', 'h', $2::halfvec)",
+			id, embed.VectorLiteral(v)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	both := []Offer{{"booksupstairs", "https://upstairs/p/1", false}, {"chapters", "https://chapters/p/1", true}}
+	all, err := KeywordVectors(ctx, pool, fakeQuery{"fake"}, "a query", Filters{}, 0)
+	if err != nil || len(all) != 3 || all[0].ID != "OL1W" || all[0].SourceURL != "" || !reflect.DeepEqual(all[0].Shops, both) {
+		t.Fatalf("all: %+v, %v", all, err)
+	}
+
+	// The book at both shops comes back once, as the nearest of its two works.
+	shop, err := KeywordVectors(ctx, pool, fakeQuery{"fake"}, "a query", Filters{InShop: true}, 0)
+	if err != nil || len(shop) != 2 {
+		t.Fatalf("in shop: %+v, %v", shop, err)
+	}
+
+	if r := shop[0]; r.ID != "chapters:9780000000001" || r.SourceURL != "https://chapters/p/1" || r.CoverURL != "https://cdn/1.jpg" ||
+		!reflect.DeepEqual(r.Shops, both) {
+		t.Errorf("bookshop result: %+v", r)
+	}
+
+	if r := shop[1]; r.ID != "booksupstairs:9780000000002" || !reflect.DeepEqual(r.Shops, []Offer{{"booksupstairs", "https://upstairs/p/2", false}}) {
+		t.Errorf("one shop: %+v", r)
 	}
 }

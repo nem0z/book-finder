@@ -4,6 +4,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
@@ -43,6 +44,7 @@ func main() {
 	flag.IntVar(&f.MinPages, "min-pages", 0, "at least this many pages")
 	flag.IntVar(&f.MaxPages, "max-pages", 0, "at most this many pages")
 	flag.StringVar(&f.OriginalLanguage, "lang", "", "original language, MARC code (eng, fre, jpn...)")
+	flag.BoolVar(&f.InShop, "shop", false, "only books a bookshop lists")
 	flag.Parse()
 
 	query := strings.Join(flag.Args(), " ")
@@ -126,6 +128,10 @@ func printInterpretation(in search.Interpretation) {
 		filters = append(filters, "lang "+f.OriginalLanguage)
 	}
 
+	if f.InShop {
+		filters = append(filters, "in a bookshop")
+	}
+
 	if len(filters) > 0 {
 		fmt.Printf("Filters: %s\n", strings.Join(filters, ", "))
 	}
@@ -153,7 +159,7 @@ func print(results []search.Result) {
 			fmt.Printf(", re-rank %.2f", r.RerankScore)
 		}
 
-		fmt.Printf("]\n    %s\n    https://openlibrary.org/works/%s\n\n", excerpt(r.Description), r.ID)
+		fmt.Printf("]\n    %s\n    %s\n\n", excerpt(r.Description), cmp.Or(r.SourceURL, "https://openlibrary.org/works/"+r.ID))
 	}
 }
 

@@ -36,6 +36,11 @@ func testPool(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 
+	// The loader keeps bookshop works, which other packages' tests may have left in the database.
+	if _, err := pool.Exec(ctx, `TRUNCATE works, work_authors, authors`); err != nil {
+		t.Fatal(err)
+	}
+
 	return pool
 }
 

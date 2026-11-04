@@ -102,8 +102,14 @@ func TestExtractBatch(t *testing.T) {
 		t.Errorf("single book: %+v, %v", ks, err)
 	}
 
-	if msg := BatchMessage(bs); !strings.HasPrefix(msg, "Book OL1W\nTitle: Tone\n") || !strings.Contains(msg, "\n\n---\n\nBook OL2W\nTitle: TDUP\n") {
+	if msg := BatchMessage(bs); !strings.HasPrefix(msg, "Book 1\nTitle: Tone\n") || !strings.Contains(msg, "\n\n---\n\nBook 2\nTitle: TDUP\n") {
 		t.Errorf("message: %q", msg)
+	}
+
+	// Answers carry the books' numbers, whatever their work IDs look like.
+	shop := []Book{{ID: "chapters:9780000000001", Title: "Tone", Description: "one"}, {ID: "chapters:9780000000002", Title: "Ttwo", Description: "two"}}
+	if ks, err := ExtractBatch(ctx, llm, shop); err != nil || ks["chapters:9780000000002"].Keywords[0] != "Ttwo" {
+		t.Errorf("work IDs: %+v, %v", ks, err)
 	}
 }
 

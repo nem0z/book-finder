@@ -32,6 +32,7 @@ export function filterLabels(f: Filters): string[] {
   else if (f.max_pages) labels.push(`Up to ${f.max_pages} pages`);
 
   if (f.original_language) labels.push(`Original language: ${f.original_language}`);
+  if (f.in_shop) labels.push("In a Dublin bookshop");
 
   return labels;
 }

@@ -76,6 +76,10 @@ func TestMerge(t *testing.T) {
 		t.Errorf("no caller filters: %+v", got)
 	}
 
+	if got := merge(Filters{InShop: true}, interpreted); !got.InShop || got.MinYear != 2020 {
+		t.Errorf("in shop: %+v", got)
+	}
+
 	caller := Filters{MinYear: 1900, MaxPages: 150, OriginalLanguage: "eng"}
 	if got := merge(caller, interpreted); got != caller {
 		t.Errorf("caller filters: %+v", got)

@@ -65,10 +65,11 @@ func StoreKeywordVectors(ctx context.Context, pool *pgxpool.Pool, emb Embedder, 
 }
 
 // PruneKeywordVectors deletes the keyword vectors of works no longer in the catalogue and returns how many.
-// It refuses to run on an empty catalogue (e.g. during a reload), which would delete every vector.
+// It refuses to run while the catalogue has no Open Library works (during a reload, or after one that failed),
+// which would delete the vector of every Open Library work; bookshop works are kept across reloads.
 func PruneKeywordVectors(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 	var works int64
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM works").Scan(&works); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM works WHERE source = 'openlibrary'").Scan(&works); err != nil {
 		return 0, err
 	}
 

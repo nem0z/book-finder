@@ -26,6 +26,20 @@ export default function BookCard({ book }: { book: Book }) {
         <p className="meta">
           {[book.authors.join(", "), book.year, book.pages && `${book.pages} pages`].filter(Boolean).join(" · ")}
         </p>
+        {book.shops.length > 0 && (
+          <p className="shop">
+            In Dublin at{" "}
+            {book.shops.map((s, i) => (
+              <span key={s.id}>
+                {i > 0 && ", "}
+                <a href={s.url} target="_blank" rel="noreferrer">
+                  {s.name}
+                </a>
+                {s.in_stock && " (in stock)"}
+              </span>
+            ))}
+          </p>
+        )}
 
         <p className="description">{text}</p>
         {long && (

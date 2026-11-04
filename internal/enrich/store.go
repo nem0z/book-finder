@@ -47,10 +47,11 @@ func Save(ctx context.Context, pool *pgxpool.Pool, model string, rows []Extracte
 }
 
 // Prune deletes the keywords of works no longer in the catalogue and returns how many. It refuses to run
-// on an empty catalogue (e.g. during a reload), which would delete everything.
+// while the catalogue has no Open Library works (during a reload, or after one that failed),
+// which would delete the keywords of every Open Library work; bookshop works are kept across reloads.
 func Prune(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 	var works int64
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM works").Scan(&works); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM works WHERE source = 'openlibrary'").Scan(&works); err != nil {
 		return 0, err
 	}
 

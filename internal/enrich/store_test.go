@@ -76,11 +76,12 @@ func TestStore(t *testing.T) {
 		t.Errorf("prune: %d, %v", n, err)
 	}
 
-	if _, err := pool.Exec(ctx, "DELETE FROM works"); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM works;
+		INSERT INTO works (id, title, source) VALUES ('chapters:9780000000001', 'Kept across reloads', 'chapters')`); err != nil {
 		t.Fatal(err)
 	}
 
 	if _, err := Prune(ctx, pool); !errors.Is(err, ErrEmptyCatalogue) {
-		t.Errorf("prune on an empty catalogue: %v", err)
+		t.Errorf("prune without Open Library works (only bookshop ones): %v", err)
 	}
 }

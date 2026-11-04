@@ -53,8 +53,21 @@ go run ./cmd/ingest \
   -ratings data/ol_dump_ratings_2026-09-30.txt.gz
 ```
 
-It applies the migrations, then rebuilds the catalogue from scratch: the existing `works`, `authors` and
-`work_authors` rows are replaced. See [docs/schema.md](docs/schema.md) for what is kept.
+It applies the migrations, then rebuilds the Open Library catalogue from scratch: the existing Open Library `works`,
+and all `authors` and `work_authors` rows, are replaced. Bookshop works (`source` other than `openlibrary`) are kept.
+See [docs/schema.md](docs/schema.md) for what is kept.
+
+To add or refresh the books of Dublin bookshops (Chapters Bookstore, Books Upstairs), then index them with
+`cmd/index`:
+
+```sh
+go run ./cmd/shops                 # every shop; -shop chapters or -shop booksupstairs for one
+```
+
+It reads each shop whole (Chapters about 40 minutes, Books Upstairs about 10), then replaces its works in one
+transaction; a failed or interrupted run leaves that shop's works as they were, and `-max-pages N` is a trial that
+changes nothing. A run that would leave a shop with less than half its books stops, unless given `-allow-shrink`.
+See [docs/shops.md](docs/shops.md).
 
 ## Index the catalogue
 
@@ -201,17 +214,20 @@ Or in Docker, with the other services: `docker compose up -d api` (rebuild after
 `docker compose up -d --build api`).
 
 `GET /search?q=<description>` returns the 10 best matches (vector search, then re-ranking) as JSON: title,
-authors, year, pages, full description, tags, cover URL and Open Library link. When an LLM read the query (see
+authors, year, pages, full description, tags, cover URL, `source` (`openlibrary` or a bookshop's ID), the
+bookshops selling it (`shops`: name, link, in stock) and a link to the Open Library page or the bookshop's product
+page. `&shop=1` searches only the books a bookshop lists (see `cmd/shops`). When an LLM read the query (see
 [Query understanding](#query-understanding-optional)), `interpretation` gives the keywords it searched for and
-the filters it applied (`min_year`, `max_year`, `min_pages`, `max_pages`); the web page shows them above the
-results. It is absent when the query was searched as typed. Flags: `-addr`
+the filters it applied (`min_year`, `max_year`, `min_pages`, `max_pages`, `in_shop`); the web page shows them above
+the results. It is absent when the query was searched as typed. Flags: `-addr`
 (default `localhost:8080`), `-no-rerank`, and the same `-db`, `-ollama`, `-reranker`, `-voyage-model`, `-llm`,
 `-llm-url`, `-llm-model` and `-llm-timeout` as `cmd/search`.
 
 ## Web app
 
 A React page with a search box and the results below: cover, title, authors, year, pages, description
-(long ones cut, with "See more") and tags. It needs Node 24+ and the API running (`go run ./cmd/api`):
+(long ones cut, with "See more") and tags. "In a Dublin bookshop" searches only the books a bookshop lists; a book
+sold in Dublin links to each shop's page. It needs Node 24+ and the API running (`go run ./cmd/api`):
 
 ```sh
 cd web
