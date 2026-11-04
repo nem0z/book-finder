@@ -130,6 +130,8 @@ func TestKeywordVectors(t *testing.T) {
 	}
 }
 
+// TestKeywordVectorsInShop also checks a shop work whose description a refresh removed while its keyword vector
+// remains: it must not break the search.
 func TestKeywordVectorsInShop(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -137,7 +139,7 @@ func TestKeywordVectorsInShop(t *testing.T) {
 		INSERT INTO works (id, title, description, isbn_13, source, source_url, cover_url, in_stock) VALUES
 		('chapters:9780000000001', 'Bookshop', 'd', '9780000000001', 'chapters', 'https://chapters/p/1', 'https://cdn/1.jpg', true),
 		('booksupstairs:9780000000001', 'Bookshop', 'd', '9780000000001', 'booksupstairs', 'https://upstairs/p/1', NULL, false),
-		('booksupstairs:9780000000002', 'Other', 'd', '9780000000002', 'booksupstairs', 'https://upstairs/p/2', NULL, NULL)`); err != nil {
+		('booksupstairs:9780000000002', 'Other', NULL, '9780000000002', 'booksupstairs', 'https://upstairs/p/2', NULL, NULL)`); err != nil {
 		t.Fatal(err)
 	}
 

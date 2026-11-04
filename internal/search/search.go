@@ -30,7 +30,8 @@ const keywordVectorSQL = `
 WITH nearest AS MATERIALIZED (
     SELECT w.id, w.title, w.author_names, coalesce(w.first_publish_year, 0) AS year,
            coalesce(w.page_count, 0) AS pages, coalesce(w.original_language, '') AS lang,
-           w.description, w.genres, w.subjects, coalesce(w.cover_id, 0) AS cover_id, w.rating_count,
+           coalesce(w.description, '') AS description, w.genres, w.subjects, coalesce(w.cover_id, 0) AS cover_id,
+           w.rating_count,
            w.source, coalesce(w.source_url, '') AS source_url, coalesce(w.cover_url, '') AS cover_url, w.isbn_13,
            CASE WHEN w.source <> 'openlibrary' AND w.isbn_13 IS NOT NULL THEN w.isbn_13 ELSE w.id END AS book,
            e.embedding <=> $1::halfvec AS distance
